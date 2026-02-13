@@ -1,0 +1,38 @@
+# ---------------------------
+# Node / Frontend
+# ---------------------------
+node_modules/
+dist/
+.build/
+.cache/
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Vite / React specific
+vite.config.js.timestamp
+vite.config.ts.timestamp
+
+# ---------------------------
+# Python / Backend
+# ---------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# FastAPI / build artifacts
+instance/
+*.db
+*.sqlite3
+
+# ---------------------------
+# OS / Editor
+# -------------------
