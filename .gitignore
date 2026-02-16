@@ -1,25 +1,3 @@
-<<<<<<< HEAD
-# ---------------------------
-# Node / Frontend
-# ---------------------------
-node_modules/
-dist/
-.build/
-.cache/
-.env
-.env.local
-.env.development
-.env.production
-.env.test
-
-# Vite / React specific
-vite.config.js.timestamp
-vite.config.ts.timestamp
-
-# ---------------------------
-# Python / Backend
-# ---------------------------
-=======
 # OS 관련
 .DS_Store
 Thumbs.db
@@ -57,31 +35,13 @@ yarn-debug.log*
 yarn-error.log*
 
 # Python (혹시 쓸 가능성을 대비!)
->>>>>>> setup
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-<<<<<<< HEAD
-.env
-.venv/
-venv/
-env/
-ENV/
-
-# FastAPI / build artifacts
-instance/
-*.db
-*.sqlite3
-
-# ---------------------------
-# OS / Editor
-# -------------------
-=======
 
 # MacOS가 자꾸 생성하는 것들
 .DS_Store
 
 # 가상 환경 폴더
 venv/
->>>>>>> setup
