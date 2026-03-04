@@ -1,29 +1,49 @@
-# ---------------------------
-# Node / Frontend
-# ---------------------------
-node_modules/
-dist/
-.build/
-.cache/
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 로그 파일
+logs/
+*.log
+
+# 환경 설정
 .env
 .env.local
-.env.development
-.env.production
-.env.test
+.env.*.local
 
-# Vite / React specific
-vite.config.js.timestamp
-vite.config.ts.timestamp
+# 의존성 폴더
+node_modules/
+vendor/
 
-# ---------------------------
-# Python / Backend
-# ---------------------------
+# 빌드 & 배포 산출물
+dist/
+build/
+.out/
+.next/
+coverage/
+
+# IDE/에디터 설정
+.vscode/
+.idea/
+*.swp
+
+# 캐시
+*.cache
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (혹시 쓸 가능성을 대비!)
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
-.venv/
+
+# MacOS가 자꾸 생성하는 것들
+.DS_Store
+
+# 가상 환경 폴더
 venv/
 env/
 ENV/
