@@ -1,0 +1,617 @@
+
+
+==================================================FILE:.\code_gather.py
+==================================================
+
+import os
+
+#모으고 싶은 확장자 설정
+extentions = ['.js','.jsx','.ts','.tsx','.css','.py']
+output_file = 'project_summary.txt'
+
+with open(output_file, 'w', encoding='utf-8') as f:
+    for root, dirs, files in os.walk('.'):
+
+        #제외할 폴더
+        if 'node_modules' in root or '.git' in root:
+            continue
+        for file in files:
+            if any(file.endswith(ext) for ext in extentions):
+                file_path = os.path.join(root, file)
+                f.write(f"\n\n{'='*50}")
+                f.write(f"FILE:{file_path}\n")
+                f.write(f"{'='*50}\n\n")
+                with open(file_path, 'r', encoding='utf-8') as code_f:
+                    f.write(code_f.read())
+                    
+print(f"모든 코드가{output_file}에 저장 되었습니다")
+
+==================================================FILE:.\backend\app\main.py
+==================================================
+
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from app.services.analyzer import calculate_brightness
+from app.services.analyzer import get_brightness_description
+from app.services.analyzer import extract_color_dna
+from app.services.analyzer import calculate_complexity 
+
+app = FastAPI()
+
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],#모든 곳에서 접속 허용
+    allow_methods=["*"],
+    allow_headers=["*"] 
+)
+ 
+@app.post("/analyze")
+async def analyze_image(file: UploadFile = File(...)):
+    image_bytes = await file.read()
+    
+    # [수정] 여러 분석 함수 실행
+    brightness_score = calculate_brightness(image_bytes)
+    complexity_score = calculate_complexity(image_bytes) # 복잡도 계산
+    colors = extract_color_dna(image_bytes, k=5)
+    
+    return {
+        "brightness": brightness_score, 
+        "complexity": complexity_score, # 결과에 추가
+        "description": get_brightness_description(brightness_score), 
+        "colors": colors
+    }
+
+==================================================FILE:.\backend\app\__init__.py
+==================================================
+
+
+
+==================================================FILE:.\backend\app\services\analyzer.py
+==================================================
+
+import cv2
+import numpy as np
+from rembg import remove # 배경 제거 라이브러리
+
+# 1. 밝기 계산 (기존 유지)
+def calculate_brightness(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+    
+    brightness = np.mean(img)
+    return float(brightness)
+
+# 2. 밝기 설명 (기존 유지)
+def get_brightness_description(score: float):
+    if score < 80:
+        return "Deep & Heavy: 묵직하고 고급스러운 무드"
+    elif score < 150:
+        return "Balanced & Neutral: 안정적이고 편안한 무드"
+    else:        
+        return "Bright & Minimal: 화사하고 깨끗한 미니멀 무드"
+
+# 3. [NEW] 복잡도 계산 (Canny Edge Detection)
+def calculate_complexity(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+
+    # 그레이스케일 변환 (윤곽선 따기 전 필수)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 윤곽선 추출 (Canny 알고리즘)
+    edges = cv2.Canny(gray, 100, 200)
+    
+    # 전체 픽셀 중 윤곽선 픽셀이 차지하는 비율 계산
+    total_pixels = edges.size
+    edge_pixels = np.count_nonzero(edges)
+    
+    complexity_score = (edge_pixels / total_pixels) * 100 * 10 # 점수 보정 (보기 좋게)
+    return min(float(complexity_score), 100.0) # 최대 100점으로 제한
+
+# 4. [UPDATE] 색상 추출 (배경 제거 후 추출)
+def extract_color_dna(image_bytes, k=5):
+    # 1) 배경 제거 (rembg 사용)
+    try:
+        # rembg는 input/output이 바이너리 형태
+        output_bytes = remove(image_bytes)
+        nparr = np.frombuffer(output_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED) # 투명도(Alpha) 포함 로드
+    except Exception as e:
+        print(f"배경 제거 실패 (원본 사용): {e}")
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if img is None:
+        return []
+    
+    # 2) 데이터 전처리
+    # 투명한 배경이 있다면(채널이 4개라면), 투명하지 않은 픽셀만 골라냄
+    if img.shape[2] == 4:
+        # Alpha 채널이 0이 아닌(투명하지 않은) 픽셀만 선택
+        mask = img[:, :, 3] > 0
+        pixels = img[mask]
+        if len(pixels) == 0: return []
+        data = pixels[:, :3] # Alpha 제외하고 RGB만 가져오기
+    else:
+        data = img.reshape((-1, 3))
+
+    data = np.float32(data)
+  
+    # 3) K-means 클러스터링
+    if len(data) < k: # 픽셀 수가 k보다 적으면 예외 처리
+        k = len(data)
+        
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    _, labels, centers = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+    
+    centers = centers.astype(int)
+    
+    # OpenCV는 BGR, 웹은 RGB이므로 변환 필요 (rembg 결과는 RGB일 수 있으나 안전하게 처리)
+    # rembg 결과는 보통 RGB지만 cv2.imdecode하면 BGR이 됨.
+    if img.shape[2] == 4:
+        # rembg를 거친 경우 BGR로 읽혔을 것이므로 RGB로 변환
+        centers_rgb = centers[:, ::-1]
+    else:
+        # 원본도 BGR
+        centers_rgb = centers[:, ::-1]
+    
+    hex_colors = [
+        f"#{r:02x}{g:02x}{b:02x}"
+        for(r,g,b) in centers_rgb
+    ]
+    return hex_colors
+
+==================================================FILE:.\frontend\eslint.config.js
+==================================================
+
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import tseslint from 'typescript-eslint'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+    },
+  },
+])
+
+
+==================================================FILE:.\frontend\postcss.config.js
+==================================================
+
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+
+==================================================FILE:.\frontend\tailwind.config.js
+==================================================
+
+/** @type {import('tailwindcss').Config} */
+export default {
+    darkMode: ["class"],
+    content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}"
+  ],
+  theme: {
+  	extend: {
+  		borderRadius: {
+  			lg: 'var(--radius)',
+  			md: 'calc(var(--radius) - 2px)',
+  			sm: 'calc(var(--radius) - 4px)'
+  		},
+  		colors: {
+  			background: 'hsl(var(--background))',
+  			foreground: 'hsl(var(--foreground))',
+  			card: {
+  				DEFAULT: 'hsl(var(--card))',
+  				foreground: 'hsl(var(--card-foreground))'
+  			},
+  			popover: {
+  				DEFAULT: 'hsl(var(--popover))',
+  				foreground: 'hsl(var(--popover-foreground))'
+  			},
+  			primary: {
+  				DEFAULT: 'hsl(var(--primary))',
+  				foreground: 'hsl(var(--primary-foreground))'
+  			},
+  			secondary: {
+  				DEFAULT: 'hsl(var(--secondary))',
+  				foreground: 'hsl(var(--secondary-foreground))'
+  			},
+  			muted: {
+  				DEFAULT: 'hsl(var(--muted))',
+  				foreground: 'hsl(var(--muted-foreground))'
+  			},
+  			accent: {
+  				DEFAULT: 'hsl(var(--accent))',
+  				foreground: 'hsl(var(--accent-foreground))'
+  			},
+  			destructive: {
+  				DEFAULT: 'hsl(var(--destructive))',
+  				foreground: 'hsl(var(--destructive-foreground))'
+  			},
+  			border: 'hsl(var(--border))',
+  			input: 'hsl(var(--input))',
+  			ring: 'hsl(var(--ring))',
+  			chart: {
+  				'1': 'hsl(var(--chart-1))',
+  				'2': 'hsl(var(--chart-2))',
+  				'3': 'hsl(var(--chart-3))',
+  				'4': 'hsl(var(--chart-4))',
+  				'5': 'hsl(var(--chart-5))'
+  			}
+  		}
+  	}
+  },
+  plugins: [require("tailwindcss-animate")],
+}
+
+
+
+==================================================FILE:.\frontend\vite.config.ts
+==================================================
+
+import path from "path"
+import react from "@vitejs/plugin-react"
+import { defineConfig } from "vite"
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+})
+
+==================================================FILE:.\frontend\src\App.css
+==================================================
+
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+
+==================================================FILE:.\frontend\src\App.tsx
+==================================================
+
+import { useState, type ChangeEvent } from 'react';
+import axios from 'axios';
+
+
+interface MoodDnaResult{
+  brightness:number;
+  complexity: number; 
+  description:string;
+  colors:string[];
+
+}
+function App() {
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<MoodDnaResult | null > (null) 
+  const [isLoading, setIsLoading] = useState(false);
+    
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setFile(e.target.files[0]);
+    }
+  };
+
+  const analyzeMood = async () => {
+    if (!file) return alert('Please select an image first.');
+
+    setIsLoading(true);
+    const formData = new FormData();
+    formData.append('file',file);
+
+    try {
+      const response = await axios.post('http://localhost:8000/analyze',formData,);
+      setResult(response.data);
+  }catch (error){
+    console.error ("분석 중 에러 발생", error);
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 font-sans">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-6">
+        <h1 className="text-3xl font-bold text-center text-gray-800">MoodDNA V2</h1>
+        <p className="text-center text-gray-500">배경 제거 & 복잡도 분석 탑재</p>
+
+      {/*사진 고르는 구역*/}
+      <div className="flex flex-col items-center space-y-4">
+        <input 
+        type="file"  
+        onChange={handleFileChange} 
+        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+        <button
+        onClick={analyzeMood}
+        disabled={isLoading}
+        className={`  w-full py-3 rounded-xl font-bold text-white transition ${
+          isLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+        }`}
+        >
+          {isLoading ? '분석 중...': '분석 시작하기'}
+        </button>
+    </div>
+  {/* 결과 보여주는 구역 */}
+        {result && (
+          <div className="mt-8 space-y-6 border-t pt-6 animate-fade-in">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold text-gray-800">{result.description}</h2>
+              
+              {/*분석 수치 표시 그리드 */}
+              <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                    <span className="block text-gray-400">밝기 (Brightness)</span>
+                    <span className="text-xl font-bold text-gray-700">{result.brightness.toFixed(1)}</span>
+                </div>
+                <div className="bg-gray-50 p-3 rounded-lg">
+                    <span className="block text-gray-400">복잡도 (Complexity)</span>
+                    <span className="text-xl font-bold text-blue-600">{result.complexity.toFixed(1)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 5가지 색상 (배경 제거된 정확한 색상) */}
+            <div>
+                <p className="text-xs text-center text-gray-400 mb-2">추출된 메인 컬러 (배경 제외)</p>
+                <div className="flex justify-between items-center px-2">
+                {result.colors.map((color, index) => (
+                    <div key={index} className="flex flex-col items-center space-y-2">
+                    <div 
+                        className="w-12 h-12 rounded-full border-2 border-gray-100 shadow-sm transform hover:scale-110 transition-transform" 
+                        style={{ backgroundColor: color }}
+                    />
+                    <span className="text-[10px] text-gray-400 font-mono">{color.toUpperCase()}</span>
+                    </div>
+                ))}
+                </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+export default App;
+
+
+==================================================FILE:.\frontend\src\index.css
+==================================================
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  }
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+
+==================================================FILE:.\frontend\src\main.tsx
+==================================================
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
+==================================================FILE:.\frontend\src\lib\utils.ts
+==================================================
+
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
