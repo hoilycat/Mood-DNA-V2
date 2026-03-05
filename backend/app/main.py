@@ -1,11 +1,21 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.analyzer import calculate_brightness
 from app.services.analyzer import get_brightness_description
 from app.services.analyzer import extract_color_dna
 from app.services.analyzer import calculate_complexity 
+from app.services.ai_consultant import consult_design
+from app.services.analyzer import calculate_saliency
+from app.services.analyzer import calculate_symmetry
+from app.services.analyzer import calculate_space_ratio
+
+from dotenv import load_dotenv
+
+
+
 
 app = FastAPI()
+load_dotenv()
 
 # CORS 설정
 app.add_middleware(
@@ -16,17 +26,32 @@ app.add_middleware(
 )
  
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(file: UploadFile = File(...)
+                        ,remove_bg: bool = Form(True)):
     image_bytes = await file.read()
     
-    # [수정] 여러 분석 함수 실행
+    #여러 분석 함수 실행
     brightness_score = calculate_brightness(image_bytes)
     complexity_score = calculate_complexity(image_bytes) # 복잡도 계산
-    colors = extract_color_dna(image_bytes, k=5)
+    saliency = calculate_saliency(image_bytes) # 시각 집중도
+    symmetry = calculate_symmetry(image_bytes) # 대칭성
+    space = calculate_space_ratio(image_bytes) # 여백 비율
+    
+    
+    colors = extract_color_dna(image_bytes, k=5, remove_bg = remove_bg)
+    
+   # AI 컨설턴트에게 디자인 분석 요청
+    ai_feedback = consult_design(brightness_score, complexity_score, saliency, symmetry, space, colors)
+    
+    description = ai_feedback
+    
     
     return {
         "brightness": brightness_score, 
         "complexity": complexity_score, # 결과에 추가
-        "description": get_brightness_description(brightness_score), 
+        "saliency": saliency,
+        "symmetry": symmetry,
+        "space": space,
+        "description": description, 
         "colors": colors
     }

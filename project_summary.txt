@@ -29,14 +29,24 @@ print(f"모든 코드가{output_file}에 저장 되었습니다")
 ==================================================FILE:.\backend\app\main.py
 ==================================================
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.analyzer import calculate_brightness
 from app.services.analyzer import get_brightness_description
 from app.services.analyzer import extract_color_dna
 from app.services.analyzer import calculate_complexity 
+from app.services.ai_consultant import consult_design
+from app.services.analyzer import calculate_saliency
+from app.services.analyzer import calculate_symmetry
+from app.services.analyzer import calculate_space_ratio
+
+from dotenv import load_dotenv
+
+
+
 
 app = FastAPI()
+load_dotenv()
 
 # CORS 설정
 app.add_middleware(
@@ -47,18 +57,33 @@ app.add_middleware(
 )
  
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(file: UploadFile = File(...)
+                        ,remove_bg: bool = Form(True)):
     image_bytes = await file.read()
     
-    # [수정] 여러 분석 함수 실행
+    #여러 분석 함수 실행
     brightness_score = calculate_brightness(image_bytes)
     complexity_score = calculate_complexity(image_bytes) # 복잡도 계산
-    colors = extract_color_dna(image_bytes, k=5)
+    saliency = calculate_saliency(image_bytes) # 시각 집중도
+    symmetry = calculate_symmetry(image_bytes) # 대칭성
+    space = calculate_space_ratio(image_bytes) # 여백 비율
+    
+    
+    colors = extract_color_dna(image_bytes, k=5, remove_bg = remove_bg)
+    
+   # AI 컨설턴트에게 디자인 분석 요청
+    ai_feedback = consult_design(brightness_score, complexity_score, saliency, symmetry, space, colors)
+    
+    description = ai_feedback
+    
     
     return {
         "brightness": brightness_score, 
         "complexity": complexity_score, # 결과에 추가
-        "description": get_brightness_description(brightness_score), 
+        "saliency": saliency,
+        "symmetry": symmetry,
+        "space": space,
+        "description": description, 
         "colors": colors
     }
 
@@ -67,6 +92,58 @@ async def analyze_image(file: UploadFile = File(...)):
 
 
 
+==================================================FILE:.\backend\app\services\ai_consultant.py
+==================================================
+
+import google.generativeai as genai
+import os
+from dotenv import load_dotenv
+
+# 파일 경로 고정
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(current_dir, "..", "..","..", ".env")
+
+load_dotenv(dotenv_path=env_path)
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+# 📍 글자 깨짐 방지를 위해 영어로만 출력!
+if not API_KEY:
+    print("[ERROR] API_KEY not found in .env file")
+else:
+    print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
+
+genai.configure(api_key=API_KEY)
+
+def consult_design(brightness, complexity, saliency, symmetry, space, colors):
+
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = f"""
+                당신은 20년 경력의 시니어 UI/UX 디자인 비평가입니다. 
+                제공된 디자인 DNA 수치를 바탕으로, 단순히 수치를 나열하는 것이 아니라 
+                지표 간의 상관관계를 분석하여 깊이 있는 비평을 해주세요.
+
+                [데이터 분석 결과]
+                - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
+                - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
+                - 주요 색상: {', '.join(colors)}
+
+                [작성 가이드 - 한국어로 작성]
+                1. 핵심 인상 (Mood): 
+                전체적인 시각적 분위기를 형용사와 디자인 용어를 섞어 세련된 문장으로 2줄 내외로 작성하세요.
+                2. 전략적 조언 (Advice): 
+                현재 수치(예: 대칭성 vs 여백)가 사용자 경험에 미치는 영향을 분석하고, 
+                실무에서 바로 적용 가능한 '심미적 개선 포인트'와 '구조적 제언'을 3줄 이상의 풍성한 내용으로 작성하세요.
+                """
+        
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        # 터미널 에러 출력도 영어로!
+        print(f"[AI Error] {e}")
+        return "Mood: AI 분석에 실패했습니다.\nAdvice: 네트워크 상태를 확인해주세요."
+
 ==================================================FILE:.\backend\app\services\analyzer.py
 ==================================================
 
@@ -74,7 +151,7 @@ import cv2
 import numpy as np
 from rembg import remove # 배경 제거 라이브러리
 
-# 1. 밝기 계산 (기존 유지)
+# 1. 밝기 계산 
 def calculate_brightness(image_bytes):
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -85,7 +162,7 @@ def calculate_brightness(image_bytes):
     brightness = np.mean(img)
     return float(brightness)
 
-# 2. 밝기 설명 (기존 유지)
+# 2. 밝기 설명 (점수에 따른 무드 설명)
 def get_brightness_description(score: float):
     if score < 80:
         return "Deep & Heavy: 묵직하고 고급스러운 무드"
@@ -94,7 +171,7 @@ def get_brightness_description(score: float):
     else:        
         return "Bright & Minimal: 화사하고 깨끗한 미니멀 무드"
 
-# 3. [NEW] 복잡도 계산 (Canny Edge Detection)
+# 3. 복잡도 계산 (Canny Edge Detection)
 def calculate_complexity(image_bytes):
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -116,17 +193,22 @@ def calculate_complexity(image_bytes):
     return min(float(complexity_score), 100.0) # 최대 100점으로 제한
 
 # 4. [UPDATE] 색상 추출 (배경 제거 후 추출)
-def extract_color_dna(image_bytes, k=5):
+def extract_color_dna(image_bytes, k=5, remove_bg=True):
+    if remove_bg:
     # 1) 배경 제거 (rembg 사용)
-    try:
-        # rembg는 input/output이 바이너리 형태
-        output_bytes = remove(image_bytes)
-        nparr = np.frombuffer(output_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED) # 투명도(Alpha) 포함 로드
-    except Exception as e:
-        print(f"배경 제거 실패 (원본 사용): {e}")
+        try:
+            # rembg는 input/output이 바이너리 형태
+            output_bytes = remove(image_bytes)
+            nparr = np.frombuffer(output_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED) # 투명도(Alpha) 포함 로드
+        except Exception as e:
+            print(f"배경 제거 실패 (원본 사용): {e}")
+            img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8),cv2.IMREAD_COLOR)
+
+    else: # 배경 제거 없이 원본 이미지로 색상 추출
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
 
     if img is None:
         return []
@@ -153,6 +235,7 @@ def extract_color_dna(image_bytes, k=5):
     
     centers = centers.astype(int)
     
+    
     # OpenCV는 BGR, 웹은 RGB이므로 변환 필요 (rembg 결과는 RGB일 수 있으나 안전하게 처리)
     # rembg 결과는 보통 RGB지만 cv2.imdecode하면 BGR이 됨.
     if img.shape[2] == 4:
@@ -167,6 +250,67 @@ def extract_color_dna(image_bytes, k=5):
         for(r,g,b) in centers_rgb
     ]
     return hex_colors
+
+# 5. 추가 분석 - 시각적 중요도 (Saliency)
+def calculate_saliency(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+
+    # Saliency Map 계산
+    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    (success, saliencyMap) = saliency.computeSaliency(img)
+    
+    if success:
+        score = np.mean(saliencyMap) * 100 * 5
+        return min(float(score), 100.0) # 최대 100점으로 제한  
+    return  0.0
+
+# 대칭성 계산 (Symmetry)
+def calculate_symmetry(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None: return 0.0
+
+    h, w, _ = img.shape
+    half_w = w // 2
+
+    # 1. 왼쪽과 오른쪽 자르기
+    left_part = img[:, :half_w]
+    right_part = img[:, w - half_w:] # 홀수 너비 대응
+
+    # 2. 오른쪽 부분을 거울처럼 뒤집기
+    right_flipped = cv2.flip(right_part, 1)
+
+    # 3. 두 부분의 차이 계산
+    diff = cv2.absdiff(left_part, right_flipped)
+    mean_diff = np.mean(diff)
+
+    # 4. 차이가 적을수록 대칭점수가 높음 (100점에서 감점하는 방식)
+    score = 100 - (mean_diff / 255 * 100 * 2) 
+    return max(float(score), 0.0)
+
+# 6. 여백 비율 계산 (Space Ratio)
+def calculate_space_ratio(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None: return 0.0
+
+    # 1. 그레이스케일 변환 후 히스토그램으로 가장 많이 등장하는 배경색 찾기
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 2. 배경이라고 판단되는 밝기 범위 (보통 아주 밝거나 아주 어두움)
+    # 여기서는 단순화해서 240 이상의 밝은 영역을 여백으로 간주한다.
+    _, white_mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    
+    # 3. 전체 면적 대비 여백 면적 비율 계산
+    total_pixels = gray.size
+    white_pixels = np.count_nonzero(white_mask)
+    
+    ratio = (white_pixels / total_pixels) * 100
+    return float(ratio)
 
 ==================================================FILE:.\frontend\eslint.config.js
 ==================================================
@@ -207,11 +351,10 @@ export default defineConfig([
 
 export default {
   plugins: {
-    tailwindcss: {},
+    '@tailwindcss/postcss': {}, 
     autoprefixer: {},
   },
 }
-
 
 ==================================================FILE:.\frontend\tailwind.config.js
 ==================================================
@@ -282,17 +425,15 @@ export default {
 ==================================================FILE:.\frontend\vite.config.ts
 ==================================================
 
-import path from "path"
-import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite' 
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
+  plugins: [
+    react(),
+    tailwindcss(), 
+  ],
 })
 
 ==================================================FILE:.\frontend\src\App.css
@@ -345,139 +486,388 @@ export default defineConfig({
 ==================================================FILE:.\frontend\src\App.tsx
 ==================================================
 
-import { useState, type ChangeEvent } from 'react';
+import { useState, useEffect, type ChangeEvent } from 'react';
 import axios from 'axios';
+import { Upload, ImageIcon, Loader2 } from 'lucide-react'; // 아이콘 사용을 위해 설치 필요 없으면 텍스트로 대체됨
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
+import { Sparkles, Activity, Grid, Maximize, Palette, Sun, Moon, Zap } from 'lucide-react';
 
 
-interface MoodDnaResult{
-  brightness:number;
-  complexity: number; 
-  description:string;
-  colors:string[];
-
+interface MoodDnaResult {
+  brightness: number;
+  complexity: number;
+  saliency: number;
+  symmetry: number;
+  space: number;
+  description: string;
+  colors: string[];
 }
+
 function App() {
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<MoodDnaResult | null > (null) 
+  const [preview, setPreview] = useState<string | null>(null); // 이미지 미리보기용
+  const [result, setResult] = useState<MoodDnaResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-    
+  const [removeBg, setRemoveBg] = useState(false); // 배경 제거 옵션
+  const [isDark, setIsDark] = useState(true);
+
+  const getChartData = (result: MoodDnaResult) => [
+    {subject: '밝기', A: (result.brightness / 255) * 100, fullMark: 100},
+    {subject: '복잡도', A: result.complexity, fullMark: 100},
+    {subject: '시각 집중도', A: result.saliency, fullMark: 100},
+    {subject: '대칭성', A: result.symmetry, fullMark: 100},
+    {subject: '여백 비율', A: result.space, fullMark: 100},
+  ]
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setFile(e.target.files[0]);
+    if (e.target.files && e.target.files[0]) {
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      // 이미지 미리보기 URL 생성
+      const objectUrl = URL.createObjectURL(selectedFile);
+      setPreview(objectUrl);
+      setResult(null); // 새 파일 올리면 기존 결과 초기화
     }
   };
 
+  // 분석 함수
   const analyzeMood = async () => {
-    if (!file) return alert('Please select an image first.');
+    if (!file) return alert('이미지를 먼저 선택해주세요.');
 
     setIsLoading(true);
     const formData = new FormData();
-    formData.append('file',file);
+    formData.append('file', file);
+    formData.append('remove_bg', String(removeBg));
 
     try {
-      const response = await axios.post('http://localhost:8000/analyze',formData,);
+      const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
       setResult(response.data);
-  }catch (error){
-    console.error ("분석 중 에러 발생", error);
-  } finally {
-    setIsLoading(false);
-  }
-};
+    } catch (error) {
+      console.error("분석 중 에러 발생", error);
+      alert("서버 연결에 실패했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 font-sans">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-6">
-        <h1 className="text-3xl font-bold text-center text-gray-800">MoodDNA V2</h1>
-        <p className="text-center text-gray-500">배경 제거 & 복잡도 분석 탑재</p>
+  useEffect(() => {
+    if(isDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    } 
+  }, [isDark]);
 
-      {/*사진 고르는 구역*/}
-      <div className="flex flex-col items-center space-y-4">
-        <input 
-        type="file"  
-        onChange={handleFileChange} 
-        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        <button
-        onClick={analyzeMood}
-        disabled={isLoading}
-        className={`  w-full py-3 rounded-xl font-bold text-white transition ${
-          isLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-        }`}
-        >
-          {isLoading ? '분석 중...': '분석 시작하기'}
-        </button>
-    </div>
-  {/* 결과 보여주는 구역 */}
-        {result && (
-          <div className="mt-8 space-y-6 border-t pt-6 animate-fade-in">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold text-gray-800">{result.description}</h2>
-              
-              {/*분석 수치 표시 그리드 */}
-              <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
-                <div className="bg-gray-50 p-3 rounded-lg">
-                    <span className="block text-gray-400">밝기 (Brightness)</span>
-                    <span className="text-xl font-bold text-gray-700">{result.brightness.toFixed(1)}</span>
+ return (
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-300 font-sans selection:bg-primary selection:text-white">
+      
+      {/* Header */}
+      <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-primary/30">
+              M
+            </div>
+            <span className="text-xl font-bold tracking-tight">Mood<span className="text-primary">DNA</span></span>
+          </div>
+          
+          <button 
+            onClick={() => setIsDark(!isDark)}
+            className="p-2 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+          >
+            {isDark ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-6 pt-24 pb-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* Left Panel: Upload & Preview */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="bg-card rounded-3xl border border-border shadow-sm p-6 overflow-hidden relative group">
+              {/* 이미지 미리보기 영역 */}
+              <div className="aspect-square w-full bg-secondary/50 rounded-xl border-2 border-dashed border-muted-foreground/20 flex flex-col items-center justify-center relative overflow-hidden transition-all hover:border-primary/50">
+                {preview ? (
+                  <>
+                    <img src={preview} alt="Preview" className="w-full h-full object-contain z-10" />
+                    <div 
+                      className="absolute inset-0 blur-3xl opacity-20 z-0 bg-cover bg-center" 
+                      style={{ backgroundImage: `url(${preview})` }} 
+                    />
+                  </>
+                ) : (
+                  <div className="text-center p-6 text-muted-foreground">
+                    <ImageIcon className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                    <p className="text-sm font-medium">Drag & drop or click to upload</p>
+                  </div>
+                )}
+                
+                {/* 파일 인풋 (투명하게 덮기) */}
+                <label className="absolute inset-0 cursor-pointer">
+                  <input type="file" className="hidden" onChange={handleFileChange} accept="image/*" />
+                </label>
+              </div>
+
+              {/* 컨트롤 영역 */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border">
+                   <input 
+                      type="checkbox" 
+                      id="bg-toggle" 
+                      checked={removeBg} 
+                      onChange={(e) => setRemoveBg(e.target.checked)}
+                      className="w-5 h-5 accent-primary rounded cursor-pointer"
+                  />
+                  <label htmlFor="bg-toggle" className="text-sm font-medium cursor-pointer flex-1">
+                      배경 제거 (Background Removal)
+                  </label>
+                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-bold">AI</span>
                 </div>
-                <div className="bg-gray-50 p-3 rounded-lg">
-                    <span className="block text-gray-400">복잡도 (Complexity)</span>
-                    <span className="text-xl font-bold text-blue-600">{result.complexity.toFixed(1)}</span>
-                </div>
+
+                <button
+                  onClick={analyzeMood}
+                  disabled={isLoading || !file}
+                  className="w-full h-12 rounded-xl bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-primary/25 flex items-center justify-center gap-2"
+                >
+                  {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={18} />}
+                  {isLoading ? 'Analyzing DNA...' : 'Analyze Image'}
+                </button>
               </div>
             </div>
-
-            {/* 5가지 색상 (배경 제거된 정확한 색상) */}
-            <div>
-                <p className="text-xs text-center text-gray-400 mb-2">추출된 메인 컬러 (배경 제외)</p>
-                <div className="flex justify-between items-center px-2">
-                {result.colors.map((color, index) => (
-                    <div key={index} className="flex flex-col items-center space-y-2">
-                    <div 
-                        className="w-12 h-12 rounded-full border-2 border-gray-100 shadow-sm transform hover:scale-110 transition-transform" 
-                        style={{ backgroundColor: color }}
-                    />
-                    <span className="text-[10px] text-gray-400 font-mono">{color.toUpperCase()}</span>
-                    </div>
-                ))}
-                </div>
-            </div>
           </div>
-        )}
-      </div>
+
+          {/* Right Panel: Analysis Results */}
+          <div className="lg:col-span-7 space-y-6">
+            {result ? (
+              <div className="space-y-6 animate-in">
+                
+                {/* 1. AI Insight Card */}
+                <div className="bg-card rounded-2xl border border-border shadow-sm p-6 relative overflow-hidden">
+                   <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-blue-500 to-purple-500"></div>
+                   <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
+                     <Sparkles className="text-purple-500" size={20} /> AI Consultant Insight
+                   </h2>
+                   <div className="space-y-4 text-sm leading-relaxed text-muted-foreground">
+                      {result.description.split('\n').filter(line => line.trim() !== "").map((line, idx) => {
+                          const [title, content] = line.split(":");
+                          return (
+                            <div key={idx} className="bg-secondary/30 p-4 rounded-xl">
+                              <span className="font-bold text-foreground block mb-1">{title}</span>
+                              {content}
+                            </div>
+                          )
+                      })}
+                   </div>
+                </div>
+
+                {/* 2. DNA Chart & Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Radar Chart */}
+                  <div className="bg-card rounded-2xl border border-border shadow-sm p-4 flex flex-col">
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-4 uppercase tracking-wider flex items-center gap-2">
+                        <Activity size={16} /> Visual DNA
+                    </h3>
+                    <div className="h-64 w-full flex-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RadarChart cx="50%" cy="50%" outerRadius="70%" data={getChartData(result)}>
+                          <PolarGrid stroke={isDark ? "#334155" : "#e2e8f0"} />
+                          <PolarAngleAxis dataKey="subject" tick={{ fill: isDark ? "#94a3b8" : "#64748b", fontSize: 12 }} />
+                          <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                          <Radar
+                            name="Mood"
+                            dataKey="A"
+                            stroke={isDark ? "#818cf8" : "#2563eb"}
+                            strokeWidth={3}
+                            fill={isDark ? "#818cf8" : "#3b82f6"}
+                            fillOpacity={0.4}
+                          />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Metrics Grid */}
+                  <div className="space-y-4">
+                     {/* Brightness */}
+                    <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                        <div className="flex justify-between items-start mb-2">
+                            <span className="text-sm text-muted-foreground font-medium flex items-center gap-2"><Sun size={16}/> Brightness</span>
+                            <span className="text-2xl font-bold font-mono">{result.brightness.toFixed(0)}</span>
+                        </div>
+                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                            <div className="bg-amber-400 h-full rounded-full transition-all duration-1000" style={{ width: `${(result.brightness/255)*100}%` }}></div>
+                        </div>
+                    </div>
+
+                    {/* Complexity */}
+                    <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                        <div className="flex justify-between items-start mb-2">
+                            <span className="text-sm text-muted-foreground font-medium flex items-center gap-2"><Grid size={16}/> Complexity</span>
+                            <span className="text-2xl font-bold font-mono text-primary">{result.complexity.toFixed(0)}</span>
+                        </div>
+                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                            <div className="bg-primary h-full rounded-full transition-all duration-1000" style={{ width: `${result.complexity}%` }}></div>
+                        </div>
+                    </div>
+
+                     {/* Space Ratio */}
+                     <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                        <div className="flex justify-between items-start mb-2">
+                            <span className="text-sm text-muted-foreground font-medium flex items-center gap-2"><Maximize size={16}/> Space Ratio</span>
+                            <span className="text-2xl font-bold font-mono">{result.space.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                            <div className="bg-emerald-500 h-full rounded-full transition-all duration-1000" style={{ width: `${result.space}%` }}></div>
+                        </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Color Palette */}
+                <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-4 uppercase tracking-wider flex items-center gap-2">
+                        <Palette size={16} /> Extracted Palette
+                    </h3>
+                    <div className="flex w-full h-24 rounded-xl overflow-hidden ring-1 ring-border shadow-inner">
+                        {result.colors.map((color, idx) => (
+                            <div 
+                                key={idx} 
+                                className="flex-1 h-full flex items-end justify-center pb-2 group cursor-pointer transition-all hover:flex-[1.5]"
+                                style={{ backgroundColor: color }}
+                                title={color}
+                                onClick={() => {
+                                    navigator.clipboard.writeText(color);
+                                    alert(`Copied: ${color}`);
+                                }}
+                            >
+                                <span className="text-[10px] font-mono bg-black/50 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                                    {color}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+              </div>
+            ) : (
+                // 빈 상태 (Empty State)
+                <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-muted-foreground space-y-4 border-2 border-dashed border-border/50 rounded-3xl bg-secondary/20">
+                    <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center">
+                        <Zap size={32} className="opacity-20" />
+                    </div>
+                    <p className="text-lg font-medium">Ready to analyze</p>
+                    <p className="text-sm max-w-xs text-center opacity-70">
+                        Upload an image to see its Design DNA, including brightness, complexity, and color palette.
+                    </p>
+                </div>
+            )}
+          </div>
+
+        </div>
+      </main>
     </div>
   );
 }
 
-
 export default App;
-
 
 ==================================================FILE:.\frontend\src\index.css
 ==================================================
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
 
+/* 📍 1. 테일윈드 v4 엔진에 색깔 이름표 등록하기 */
+@theme {
+  /* 테일윈드가 bg-background, text-foreground 등을 알아듣게 만드는 마법 주문이야 */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --radius-xl: var(--radius);
+  --radius-lg: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-sm: calc(var(--radius) - 6px);
+}
+
+/* 📍 2. 실제 색상 값 정의 (용용이가 고른 예쁜 색들!) */
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --radius: 0.5rem;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
   }
 }
 
-body {
-  @apply bg-gray-100;
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+/* 📍 3. 이제 등록된 이름표를 사용하기 */
+@layer base {
+  * {
+    /* 아까 등록한 --color-border 덕분에 이제 border-border를 사용할 수 있어! */
+    @apply border-border;
+  }
+  body {
+    /* 아까 등록한 --color-background 덕분에 이제 bg-background를 사용할 수 있어! */
+    @apply bg-background text-foreground transition-colors duration-300;
+  }
 }
 
 ==================================================FILE:.\frontend\src\main.tsx
