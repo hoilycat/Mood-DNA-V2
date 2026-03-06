@@ -1,4 +1,5 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
 from dotenv import load_dotenv
 
@@ -9,40 +10,90 @@ env_path = os.path.join(current_dir, "..", "..","..", ".env")
 load_dotenv(dotenv_path=env_path)
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 📍 글자 깨짐 방지를 위해 영어로만 출력!
+#글자 깨짐 방지를 위해 영어로만 출력!
 if not API_KEY:
     print("[ERROR] API_KEY not found in .env file")
 else:
     print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
 
-genai.configure(api_key=API_KEY)
 
-def consult_design(brightness, complexity, saliency, symmetry, space, colors):
+def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space, colors):
 
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
-                당신은 20년 경력의 시니어 UI/UX 디자인 비평가입니다. 
-                제공된 디자인 DNA 수치를 바탕으로, 단순히 수치를 나열하는 것이 아니라 
-                지표 간의 상관관계를 분석하여 깊이 있는 비평을 해주세요.
+                당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
+                인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
+                해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
+                #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
+                
+                [1단계: 분야 판별 및 페르소나 설정]
+                이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
+                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시.
+                2. 인터페이스(UI/UX): 가용성, 시각적 위계, 반응성 중시.
+                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시.
+                4. 산업/제품(Industrial): 형태와 기능의 조화, 질감, 인체공학적 시각 요소 중시. 운송 수단(자동차,자전거), 가전, 가구 등 실제 물리적 제품.실용적 디자인 뿐만 아니라 예술적/ 실험적 형태의 시제품도 포함.
+                5. 공간/인테리어(Interior): 분위기, 조명 평형, 공간 대비 중시.
+                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시.
+
+                [2단계: 데이터의 분야별 재해석]
+                동일한 수치라도 분야에 따라 다르게 해석하세요.
+                - 예(복잡도): UI에서는 '낮음'이 미덕이지만, 화려한 포스터에서는 '낮음'이 '단조로움'일 수 있음.
+                - 예(대칭성): 로고에서는 '안정감'이지만, 현대 건축에서는 '지루함'일 수 있음.
+                - 예(형태 및 곡률): 캐릭터 디자인에서 곡선 위주의 둥글둥글한 형태는 무해함과 귀여움을 상징하지만, 게임 캐릭터의 날카로운 직선과 삼각형 구조는 강력함과 긴장감을 의미함.
+                - 예(대칭성): 높은 대칭성은 캐릭터의 안정감을 주어 친근하게 느껴지게 하지만, 의도적인 비대칭은 캐릭터에 생동감과 성격을 부여함.
 
                 [데이터 분석 결과]
                 - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
                 - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
                 - 주요 색상: {', '.join(colors)}
 
-                [작성 가이드 - 한국어로 작성]
-                1. 핵심 인상 (Mood): 
-                전체적인 시각적 분위기를 형용사와 디자인 용어를 섞어 세련된 문장으로 2줄 내외로 작성하세요.
-                2. 전략적 조언 (Advice): 
-                현재 수치(예: 대칭성 vs 여백)가 사용자 경험에 미치는 영향을 분석하고, 
-                실무에서 바로 적용 가능한 '심미적 개선 포인트'와 '구조적 제언'을 3줄 이상의 풍성한 내용으로 작성하세요.
+                [3단계: 최종 비평 리포트 - 한국어로 작성]
+                1. 판별된 디자인 분야: (예: 산업 디자인 - 가전제품)
+                2. 핵심 인상 (Mood): 해당 분야의 전문 용어를 사용하여 분위기를 2줄 내외로 묘사.
+                3. 분야별 심층 조언 (Expert Advice): 
+                - 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
+                - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 3줄 이상 작성.
+                4. (선택 사항) 추가적으로, 해당 디자인이 특정 유명 작품이나 스타일과 유사하다면, 그 작품/스타일과의 비교를 통해 조언을 보강하세요.
+                5. (선택 사항) 만약 데이터가 모순적이거나 해석이 어려운 경우, '데이터 해석의 난점'을 짧게 언급하고, 그럼에도 불구하고 도출할 수 있는 인사이트를 제시하세요.
+                6. (선택 사항) 마지막으로, 해당 디자인이 현재 트렌드와 어떻게 부합하거나 벗어나는지 간략히 언급하여, 실무자에게 '트렌드 적합성'에 대한 시각을 제공하세요.
+                7. (선택 사항) 디자인의 '목적'이 명확하다면, 그 목적에 대한 달성도를 평가하고, 만약 개선이 필요하다면 구체적인 개선 방향을 제시하세요.
+                8. (선택 사항) 만약 입력된 데이터가 특정 디자인 원칙(예: 균형, 대비, 강조 등)과 관련이 있다면, 그 원칙에 대한 분석과 조언을 추가하세요.
+                9. (선택 사항) 디자인이 특정 문화적 맥락이나 타겟 오디언스와 관련이 있다면, 그 맥락에 대한 분석과 조언을 추가하세요.
+                10.캐릭터 특화 조언 가이드 (참고)
+                - 현재 데이터가 캐릭터의 '귀여움'이나 '역동성' 등 설계 목적에 부합하는지 분석.
+                - 캐릭터의 등신대 비율과 눈의 위치 등 조형적 특징이 주는 심리적 효과를 비평에 포함.
+                - 만약 디자인이 '의도된 촌스러움'이나 '키치한 감성'을 지향한다면, 그 맥락에 맞춰 분석과 조언을 제공.
+
+                선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
+                
+                [출력 형식 - JSON]
+                주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
+                {{
+                "category": "판별된 분야",
+                "mood": "작성 가이드를 따른 핵심 인상",
+                "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용",
+                "unsplash_keywords": ["추천 영문 검색어 3개"],
+                "suggested_palette": ["추천 HEX 컬러칩 3개"]
+                }}
+
                 """
+        contents =[
+            {"mime_type": "image/jpeg", "data": image_bytes},
+            prompt
+        ]
         
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                prompt
+            ]
+        )
         return response.text
+    
     except Exception as e:
-        # 터미널 에러 출력도 영어로!
+        # 터미널 에러 출력도 추가
         print(f"[AI Error] {e}")
         return "Mood: AI 분석에 실패했습니다.\nAdvice: 네트워크 상태를 확인해주세요."
