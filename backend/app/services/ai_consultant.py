@@ -2,6 +2,7 @@ from google import genai
 from google.genai import types
 import os
 from dotenv import load_dotenv
+import json
 
 # 파일 경로 고정
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -89,11 +90,25 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 prompt
-            ]
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
-        return response.text
+
+        # AI 응답 텍스트가 비어있는지 확인 후 파싱
+        if not response.text:
+            raise ValueError("AI 응답이 비어있습니다.")
+        
+        return json.loads(response.text)
     
     except Exception as e:
         # 터미널 에러 출력도 추가
         print(f"[AI Error] {e}")
-        return "Mood: AI 분석에 실패했습니다.\nAdvice: 네트워크 상태를 확인해주세요."
+        return {
+            "category": "분석 실패",
+            "mood": "AI 분석 중 오류가 발생했습니다.",
+            "advice": f"네트워크 상태나 API 설정을 확인해주세요. (에러: {str(e)})",
+            "unsplash_keywords": ["error"],
+            "suggested_palette": ["#CCCCCC", "#999999", "#666666"]
+        }

@@ -68,6 +68,7 @@ async def analyze_image(file: UploadFile = File(...)
     
 
     return {
+        **ai_feedback, # AI 피드백의 모든 키-값 쌍을 응답에 포함
         "brightness": brightness_score, 
         "complexity": complexity_score, # 결과에 추가
         "saliency": saliency,
