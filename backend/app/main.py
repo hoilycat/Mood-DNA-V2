@@ -1,3 +1,4 @@
+from app.services.unsplash_service import get_reference_images
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.analyzer import calculate_brightness
@@ -12,6 +13,7 @@ from .database import engine, Base, get_db
 from .models import DesignHistory
 from sqlalchemy.orm import Session
 from fastapi import Depends
+from rembg import remove
 import json
 
 from dotenv import load_dotenv
@@ -38,18 +40,25 @@ async def analyze_image(file: UploadFile = File(...)
 ):
     image_bytes = await file.read()
     
+    analyze_bytes =image_bytes
+    if remove_bg:
+        try:   
+            analyze_bytes = remove(image_bytes)
+        except Exception as e:
+            print(f"배경 제거 실패:{e}")
+    
     #여러 분석 함수 실행
-    brightness_score = calculate_brightness(image_bytes)
-    complexity_score = calculate_complexity(image_bytes) # 복잡도 계산
-    saliency = calculate_saliency(image_bytes) # 시각 집중도
-    symmetry = calculate_symmetry(image_bytes) # 대칭성
-    space = calculate_space_ratio(image_bytes) # 여백 비율
-    
-    
-    colors = extract_color_dna(image_bytes, k=5, remove_bg = remove_bg)
+    brightness_score = calculate_brightness(analyze_bytes)
+    complexity_score = calculate_complexity(analyze_bytes) # 복잡도 계산
+    saliency = calculate_saliency(analyze_bytes) # 시각 집중도
+    symmetry = calculate_symmetry(analyze_bytes) # 대칭성
+    space = calculate_space_ratio(analyze_bytes) # 여백 비율
+     
+    colors = extract_color_dna(analyze_bytes, k=5, remove_bg = remove_bg)
     
    # AI 컨설턴트에게 디자인 분석 요청
-    ai_feedback = consult_design(image_bytes,brightness_score, complexity_score, saliency, symmetry, space, colors)
+    ai_feedback = consult_design(analyze_bytes,brightness_score, complexity_score, saliency, symmetry, space, colors)
+    reference_images = await get_reference_images(ai_feedback.get("unsplash_keywords",[])) 
     
     description = ai_feedback
     
@@ -75,5 +84,6 @@ async def analyze_image(file: UploadFile = File(...)
         "symmetry": symmetry,
         "space": space,
         "description": description, 
-        "colors": colors
+        "colors": colors,
+        "reference_images": reference_images
     }

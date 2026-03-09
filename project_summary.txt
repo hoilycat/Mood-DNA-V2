@@ -1,6 +1,6 @@
 
 
-==================================================FILE:./code_gather.py
+==================================================FILE:.\code_gather.py
 ==================================================
 
 import os
@@ -26,7 +26,567 @@ with open(output_file, 'w', encoding='utf-8') as f:
                     
 print(f"모든 코드가{output_file}에 저장 되었습니다")
 
-==================================================FILE:./frontend/tailwind.config.js
+==================================================FILE:.\backend\app\database.py
+==================================================
+
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./mood_dna.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+==================================================FILE:.\backend\app\main.py
+==================================================
+
+from app.services.unsplash_service import get_reference_images
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from app.services.analyzer import calculate_brightness
+from app.services.analyzer import get_brightness_description
+from app.services.analyzer import extract_color_dna
+from app.services.analyzer import calculate_complexity 
+from app.services.ai_consultant import consult_design
+from app.services.analyzer import calculate_saliency
+from app.services.analyzer import calculate_symmetry
+from app.services.analyzer import calculate_space_ratio
+from .database import engine, Base, get_db
+from .models import DesignHistory
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from rembg import remove
+import json
+
+from dotenv import load_dotenv
+
+
+app = FastAPI()
+load_dotenv()
+Base.metadata.create_all(bind=engine) # 테이블 생성
+
+
+
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],#모든 곳에서 접속 허용
+    allow_methods=["*"],
+    allow_headers=["*"] 
+)
+ 
+@app.post("/analyze")
+async def analyze_image(file: UploadFile = File(...)
+                        ,remove_bg: bool = Form(True)
+                        ,db: Session = Depends(get_db)
+):
+    image_bytes = await file.read()
+    
+    analyze_bytes =image_bytes
+    if remove_bg:
+        try:   
+            analyze_bytes = remove(image_bytes)
+        except Exception as e:
+            print(f"배경 제거 실패:{e}")
+    
+    #여러 분석 함수 실행
+    brightness_score = calculate_brightness(analyze_bytes)
+    complexity_score = calculate_complexity(analyze_bytes) # 복잡도 계산
+    saliency = calculate_saliency(analyze_bytes) # 시각 집중도
+    symmetry = calculate_symmetry(analyze_bytes) # 대칭성
+    space = calculate_space_ratio(analyze_bytes) # 여백 비율
+     
+    colors = extract_color_dna(analyze_bytes, k=5, remove_bg = remove_bg)
+    
+   # AI 컨설턴트에게 디자인 분석 요청
+    ai_feedback = consult_design(analyze_bytes,brightness_score, complexity_score, saliency, symmetry, space, colors)
+    reference_images = await get_reference_images(ai_feedback.get("unsplash_keywords",[])) 
+    
+    description = ai_feedback
+    
+    # DB에 저장
+    new_record = DesignHistory(
+        brightness=brightness_score,
+        complexity=complexity_score,
+        saliency=saliency,
+        symmetry=symmetry,
+        space=space,
+        colors=",".join(colors),
+        description=json.dumps(ai_feedback) # JSON 문자열로 저장
+    )
+    db.add(new_record)
+    db.commit()
+    
+
+    return {
+        **ai_feedback, # AI 피드백의 모든 키-값 쌍을 응답에 포함
+        "brightness": brightness_score, 
+        "complexity": complexity_score, # 결과에 추가
+        "saliency": saliency,
+        "symmetry": symmetry,
+        "space": space,
+        "description": description, 
+        "colors": colors,
+        "reference_images": reference_images
+    }
+
+==================================================FILE:.\backend\app\models.py
+==================================================
+
+from sqlalchemy import Column, Integer, Float, String, Text
+from .database import Base
+
+class DesignHistory(Base):
+    __tablename__ = "design_history"
+    id = Column(Integer, primary_key=True, index=True)
+    brightness = Column(Float)
+    complexity = Column(Float)
+    saliency = Column(Float)
+    symmetry = Column(Float)
+    space = Column(Float)
+    colors = Column(String) # 리스트를 문자열로 저장
+    description = Column(Text)
+
+==================================================FILE:.\backend\app\__init__.py
+==================================================
+
+
+
+==================================================FILE:.\backend\app\services\ai_consultant.py
+==================================================
+
+from google import genai
+from google.genai import types
+import os
+from dotenv import load_dotenv
+import json
+
+# 파일 경로 고정
+current_dir = os.path.dirname(os.path.abspath(__file__))
+env_path = os.path.join(current_dir, "..", "..","..", ".env")
+
+load_dotenv(dotenv_path=env_path)
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+#글자 깨짐 방지를 위해 영어로만 출력!
+if not API_KEY:
+    print("[ERROR] API_KEY not found in .env file")
+else:
+    print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
+
+
+def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space, colors):
+
+    try:
+        client = genai.Client(api_key=API_KEY)
+        
+        prompt = f"""
+                당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
+                인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
+                해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
+                #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
+                
+                [중요: 가독성 규칙]
+                    - 모든 출력 텍스트는 사용자가 읽기 편하도록 문단이 바뀔 때마다 줄바꿈 기호(\\n)를 2번 사용하여 간격을 넓히세요.
+                    - 나열식 설명이 필요한 경우 번호를 매겨 구분하세요.                
+                
+                [1단계: 분야 판별 및 페르소나 설정]
+                이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
+                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시.
+                2. 인터페이스(UI/UX): 가용성, 시각적 위계, 반응성 중시.
+                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시.
+                4. 산업/제품(Industrial): 형태와 기능의 조화, 질감, 인체공학적 시각 요소 중시. 운송 수단(자동차,자전거), 가전, 가구 등 실제 물리적 제품.실용적 디자인 뿐만 아니라 예술적/ 실험적 형태의 시제품도 포함.
+                5. 공간/인테리어(Interior): 분위기, 조명 평형, 공간 대비 중시.
+                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시.
+                
+                이미지에 여러 캐릭터가 배치되어 있고 텍스트와 함께 특정 정보를 전달하는 구조라면, 캐릭터가 아닌 그래픽/편집으로 분류하세요. 단, 캐릭터가 이미지의 주된 요소이면서, 그 자체로 독립적인 디자인으로서의 완성도가 높다면 캐릭터/이모티콘으로 분류할 수 있습니다.
+                
+
+                [2단계: 데이터의 분야별 재해석]
+                동일한 수치라도 분야에 따라 다르게 해석하세요.
+                    - 예(복잡도): UI에서는 '낮음'이 미덕이지만, 화려한 포스터에서는 '낮음'이 '단조로움'일 수 있음.
+                    - 예(대칭성): 로고에서는 '안정감'이지만, 현대 건축에서는 '지루함'일 수 있음.
+                    - 예(형태 및 곡률): 캐릭터 디자인에서 곡선 위주의 둥글둥글한 형태는 무해함과 귀여움을 상징하지만, 게임 캐릭터의 날카로운 직선과 삼각형 구조는 강력함과 긴장감을 의미함.
+                    - 예(대칭성): 높은 대칭성은 캐릭터의 안정감을 주어 친근하게 느껴지게 하지만, 의도적인 비대칭은 캐릭터에 생동감과 성격을 부여함.
+
+                [데이터 분석 결과]
+                    - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
+                    - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
+                    - 주요 색상: {', '.join(colors)}
+
+                [3단계: 최종 비평 리포트 - 한국어로 작성]
+                1. 판별된 디자인 분야: (예: 산업 디자인 - 가전제품)
+                2. 핵심 인상 (Mood): 해당 분야의 전문 용어를 사용하여 분위기를 2줄 내외로 묘사.
+                3. 분야별 심층 조언 (Expert Advice): 
+                    - [프로 수준일 때]: 이 디자인이 왜 성공적인지, 데이터(대칭성/여백 등)가 어떻게 조화를 이루어 품격을 만드는지 미학적으로 분석하세요.
+                    - [입문 수준일 때]: 데이터의 불균형을 지적하고, 목적에 부합하도록 수정해야 할 핵심 포인트를 조언하세요.
+                    - 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
+                    - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 3줄 이상 작성.
+                4. (선택 사항) 추가적으로, 해당 디자인이 특정 유명 작품이나 스타일과 유사하다면, 그 작품/스타일과의 비교를 통해 조언을 보강하세요.
+                5. (선택 사항) 만약 데이터가 모순적이거나 해석이 어려운 경우, '데이터 해석의 난점'을 짧게 언급하고, 그럼에도 불구하고 도출할 수 있는 인사이트를 제시하세요.
+                6. (선택 사항) 마지막으로, 해당 디자인이 현재 트렌드와 어떻게 부합하거나 벗어나는지 간략히 언급하여, 실무자에게 '트렌드 적합성'에 대한 시각을 제공하세요.
+                7. (선택 사항) 디자인의 '목적'이 명확하다면, 그 목적에 대한 달성도를 평가하고, 만약 개선이 필요하다면 구체적인 개선 방향을 제시하세요.
+                8. (선택 사항) 만약 입력된 데이터가 특정 디자인 원칙(예: 균형, 대비, 강조 등)과 관련이 있다면, 그 원칙에 대한 분석과 조언을 추가하세요.
+                9. (선택 사항) 디자인이 특정 문화적 맥락이나 타겟 오디언스와 관련이 있다면, 그 맥락에 대한 분석과 조언을 추가하세요.
+                10.캐릭터 특화 조언 가이드 (참고)
+                    - 현재 데이터가 캐릭터의 '귀여움'이나 '역동성' 등 설계 목적에 부합하는지 분석.
+                    - 캐릭터의 등신대 비율과 눈의 위치 등 조형적 특징이 주는 심리적 효과를 비평에 포함.
+                    - 만약 디자인이 '의도된 촌스러움'이나 '키치한 감성'을 지향한다면, 그 맥락에 맞춰 분석과 조언을 제공.
+                11.벤치마킹 도약 가이드 (Benchmarking Guide):
+                    - 하단에 제시될 레퍼런스 이미지들을 단순히 '유사 사례'가 아닌 '완성도를 한 단계 높이기 위한 목표'로 설정하여 설명하세요.
+                    - 레퍼런스의 어떤 디테일(질감, 비례, 레이아웃 등)을 흡수해야 현재 디자인이 '프로급'으로 도약할 수 있는지 핀포인트로 조언하세요.
+                
+                선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
+                
+                [출력 형식 - JSON]
+                주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
+                {{
+                "category": "판별된 분야",
+                "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
+                "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
+                "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
+                "unsplash_keywords": ["추천 영문 검색어 3개"],
+                "suggested_palette": ["추천 HEX 컬러칩 3개"]
+                }}
+
+                """
+        contents =[
+            {"mime_type": "image/jpeg", "data": image_bytes},
+            prompt
+        ]
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                prompt
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+
+        # AI 응답 텍스트가 비어있는지 확인 후 파싱
+        if not response.text:
+            raise ValueError("AI 응답이 비어있습니다.")
+        
+        return json.loads(response.text)
+    
+    except Exception as e:
+        # 터미널 에러 출력도 추가
+        print(f"[AI Error] {e}")
+        return {
+            "category": "분석 실패",
+            "mood": "AI 분석 중 오류가 발생했습니다.",
+            "advice": f"네트워크 상태나 API 설정을 확인해주세요. (에러: {str(e)})",
+            "unsplash_keywords": ["error"],
+            "suggested_palette": ["#CCCCCC", "#999999", "#666666"]
+        }
+
+==================================================FILE:.\backend\app\services\analyzer.py
+==================================================
+
+import cv2
+import numpy as np
+from rembg import remove # 배경 제거 라이브러리
+
+
+# 투명도(Alpha)를 고려해서 유효한 픽셀만 골라내는 헬퍼 함수
+def get_foreground_mask(img):
+    if img.shape[2] == 4: # RGBA 이미지인 경우
+        return img[:, :, 3] > 0 # 알파 채널이 0보다 큰(투명하지 않은) 부분만 True
+    return None
+
+# 1. 밝기 계산 
+def calculate_brightness(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+    
+    brightness = np.mean(img)
+    return float(brightness)
+
+# 2. 밝기 설명 (점수에 따른 무드 설명)
+def get_brightness_description(score: float):
+    if score < 80:
+        return "Deep & Heavy: 묵직하고 고급스러운 무드"
+    elif score < 150:
+        return "Balanced & Neutral: 안정적이고 편안한 무드"
+    else:        
+        return "Bright & Minimal: 화사하고 깨끗한 미니멀 무드"
+
+# 3. 복잡도 계산 (Canny Edge Detection)
+def calculate_complexity(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+
+    # 그레이스케일 변환 (윤곽선 따기 전 필수)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY if img.shape[2] == 4 else cv2.COLOR_BGR2GRAY)
+    
+    # 윤곽선 추출 (Canny 알고리즘)
+    edges = cv2.Canny(gray, 100, 200)
+    
+    mask = get_foreground_mask(img)
+    if mask is not None:
+        # 디자인 요소(Foreground) 면적 안에서만 엣지 비율 계산
+        total_foreground_area = np.count_nonzero(mask)
+        edge_pixels_in_foreground = np.count_nonzero(edges & mask) # 마스크 영역 안의 엣지만
+        if total_foreground_area == 0: return 0.0
+        score = (edge_pixels_in_foreground / total_foreground_area) * 100 * 10
+    else:
+        score = (np.count_nonzero(edges) / edges.size) * 100 * 10
+        
+    return min(float(score), 100.0)
+
+def calculate_space_ratio(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+    if img is None: return 0.0
+
+    if img.shape[2] == 4:
+        # 배경 제거가 된 경우, 투명한 픽셀(Alpha=0) 자체가 여백입니다.
+        transparent_pixels = np.count_nonzero(img[:, :, 3] == 0)
+        total_pixels = img.shape[0] * img.shape[1]
+        return float((transparent_pixels / total_pixels) * 100)
+    
+    # 배경 제거 안 된 경우 기존 로직 유지
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, white_mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    return float((np.count_nonzero(white_mask) / gray.size) * 100)
+
+    # 전체 픽셀 중 윤곽선 픽셀이 차지하는 비율 계산
+    total_pixels = edges.size
+    edge_pixels = np.count_nonzero(edges)
+    
+    complexity_score = (edge_pixels / total_pixels) * 100 * 10 # 점수 보정 (보기 좋게)
+    return min(float(complexity_score), 100.0) # 최대 100점으로 제한
+
+# 4. [UPDATE] 색상 추출 (배경 제거 후 추출)
+def extract_color_dna(image_bytes, k=5, remove_bg=True):
+    if remove_bg:
+    # 1) 배경 제거 (rembg 사용)
+        try:
+            # rembg는 input/output이 바이너리 형태
+            output_bytes = remove(image_bytes)
+            nparr = np.frombuffer(output_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED) # 투명도(Alpha) 포함 로드
+        except Exception as e:
+            print(f"배경 제거 실패 (원본 사용): {e}")
+            img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8),cv2.IMREAD_COLOR)
+
+    else: # 배경 제거 없이 원본 이미지로 색상 추출
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+
+    if img is None:
+        return []
+    
+    # 2) 데이터 전처리
+    # 투명한 배경이 있다면(채널이 4개라면), 투명하지 않은 픽셀만 골라냄
+    if img.shape[2] == 4:
+        # Alpha 채널이 0이 아닌(투명하지 않은) 픽셀만 선택
+        mask = img[:, :, 3] > 0
+        pixels = img[mask]
+        if len(pixels) == 0: return []
+        data = pixels[:, :3] # Alpha 제외하고 RGB만 가져오기
+    else:
+        data = img.reshape((-1, 3))
+
+    data = np.float32(data)
+  
+    # 3) K-means 클러스터링
+    if len(data) < k: # 픽셀 수가 k보다 적으면 예외 처리
+        k = len(data)
+        
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    _, labels, centers = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+    
+    centers = centers.astype(int)
+    
+    
+    # OpenCV는 BGR, 웹은 RGB이므로 변환 필요 (rembg 결과는 RGB일 수 있으나 안전하게 처리)
+    # rembg 결과는 보통 RGB지만 cv2.imdecode하면 BGR이 됨.
+    if img.shape[2] == 4:
+        # rembg를 거친 경우 BGR로 읽혔을 것이므로 RGB로 변환
+        centers_rgb = centers[:, ::-1]
+    else:
+        # 원본도 BGR
+        centers_rgb = centers[:, ::-1]
+    
+    hex_colors = [
+        f"#{r:02x}{g:02x}{b:02x}"
+        for(r,g,b) in centers_rgb
+    ]
+    vivid_colors = [c for c in hex_colors if is_vivid(c)]
+    
+    # 만약 선명한 색이 하나도 없다면(B&W 로고 등), 그냥 추출된 원래 색상들을 보여주기
+    if not vivid_colors:
+        return hex_colors[:5]
+
+    return vivid_colors[:5]
+
+
+# 5. 추가 분석 - 시각적 중요도 (Saliency)
+def calculate_saliency(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return 0.0
+
+    # Saliency Map 계산
+    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    (success, saliencyMap) = saliency.computeSaliency(img)
+    
+    if success:
+        score = np.mean(saliencyMap) * 100 * 5
+        return min(float(score), 100.0) # 최대 100점으로 제한  
+    return  0.0
+
+# 대칭성 계산 (Symmetry)
+def calculate_symmetry(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None: return 0.0
+
+    h, w, _ = img.shape
+    half_w = w // 2
+
+    # 1. 왼쪽과 오른쪽 자르기
+    left_part = img[:, :half_w]
+    right_part = img[:, w - half_w:] # 홀수 너비 대응
+
+    # 2. 오른쪽 부분을 거울처럼 뒤집기
+    right_flipped = cv2.flip(right_part, 1)
+
+    # 3. 두 부분의 차이 계산
+    diff = cv2.absdiff(left_part, right_flipped)
+    mean_diff = np.mean(diff)
+
+    # 4. 차이가 적을수록 대칭점수가 높음 (100점에서 감점하는 방식)
+    score = 100 - (mean_diff / 255 * 100 * 2) 
+    return max(float(score), 0.0)
+
+# 6. 여백 비율 계산 (Space Ratio)
+def calculate_space_ratio(image_bytes):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None: return 0.0
+
+    # 1. 그레이스케일 변환 후 히스토그램으로 가장 많이 등장하는 배경색 찾기
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 2. 배경이라고 판단되는 밝기 범위 (보통 아주 밝거나 아주 어두움)
+    # 여기서는 단순화해서 240 이상의 밝은 영역을 여백으로 간주한다.
+    _, white_mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
+    
+    # 3. 전체 면적 대비 여백 면적 비율 계산
+    total_pixels = gray.size
+    white_pixels = np.count_nonzero(white_mask)
+    
+    ratio = (white_pixels / total_pixels) * 100
+    return float(ratio)
+
+def is_vivid(hex_color):
+    hex_color = hex_color.lstrip('#')
+    rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    bgr = np.uint8([[ [rgb[2], rgb[1], rgb[0]] ]])
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)[0][0]
+    
+    s = hsv[1] # 채도 (0~255)
+    v = hsv[2] # 명도 (0~255)
+    
+    #채도가 40보다 낮으면 '회색'으로 보고 버리기
+    # 너무 어둡거나(v<30) 너무 밝은(v>240) 것도 버리면 순수한 색만 남지.
+    return s > 40 and 30 < v < 240
+
+==================================================FILE:.\backend\app\services\unsplash_service.py
+==================================================
+
+import httpx
+import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
+UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
+
+async def get_reference_images(keywords: list):
+    if not keywords or not UNSPLASH_ACCESS_KEY:
+        return []
+    
+    search_query = keywords[0]
+    url = f"https://api.unsplash.com/search/photos?query={search_query}&per_page=5&client_id={UNSPLASH_ACCESS_KEY}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url)
+            data = response.json()
+            return [img ['urls']['regular'] for img in data.get('results',[])]
+        except Exception as e:
+            print(f"Error fetching images from Unsplash: {e}")
+            return []
+
+
+==================================================FILE:.\frontend\eslint.config.js
+==================================================
+
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+
+
+==================================================FILE:.\frontend\postcss.config.js
+==================================================
+
+export default {
+  plugins: {
+    '@tailwindcss/postcss': {}, 
+    autoprefixer: {},
+  },
+}
+
+==================================================FILE:.\frontend\tailwind.config.js
 ==================================================
 
 /** @type {import('tailwindcss').Config} */
@@ -92,41 +652,7 @@ export default {
 
 
 
-==================================================FILE:./frontend/eslint.config.js
-==================================================
-
-import js from '@eslint/js'
-import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
-    languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
-      parserOptions: {
-        ecmaVersion: 'latest',
-        ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-      },
-    },
-    rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-    },
-  },
-])
-
-
-==================================================FILE:./frontend/vite.config.ts
+==================================================FILE:.\frontend\vite.config.ts
 ==================================================
 
 import { defineConfig } from 'vite'
@@ -140,25 +666,61 @@ export default defineConfig({
   ],
 })
 
-==================================================FILE:./frontend/postcss.config.js
+==================================================FILE:.\frontend\src\App.css
 ==================================================
 
-export default {
-  plugins: {
-    '@tailwindcss/postcss': {}, 
-    autoprefixer: {},
-  },
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
 }
 
-==================================================FILE:./frontend/src/App.tsx
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+
+==================================================FILE:.\frontend\src\App.tsx
 ==================================================
 
 import { useState, useEffect, type ChangeEvent } from 'react';
 import axios from 'axios';
-import { ImageIcon, Loader2, Sparkles, Activity, Grid, Maximize, Palette, Sun, Moon, Zap } from 'lucide-react';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
+import { ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, Sun, Moon, Zap } from 'lucide-react';
+import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
 
-// 📍 1. 인터페이스 업데이트 (Day 8: 백엔드 JSON 구조와 일치)
 interface MoodDnaResult {
   brightness: number;
   complexity: number;
@@ -169,8 +731,10 @@ interface MoodDnaResult {
   category: string;
   mood: string;
   advice: string;
+  benchmarking_point: string;
   unsplash_keywords: string[];
   suggested_palette: string[];
+  reference_images: string[];
 }
 
 function App() {
@@ -256,7 +820,7 @@ function App() {
                     <p className="text-sm font-medium">Drag & drop or click to upload</p>
                   </div>
                 )}
-                <label className="absolute inset-0 cursor-pointer">
+                <label className="absolute inset-0 cursor-pointer z-20">
                   <input type="file" className="hidden" onChange={handleFileChange} accept="image/*" />
                 </label>
               </div>
@@ -278,12 +842,12 @@ function App() {
           {/* Right Panel: Analysis Results */}
           <div className="lg:col-span-7 space-y-6">
             {result ? (
-              // 📍 괄호가 열리는 결과화면 시작! (A 영역)
+              // 괄호가 열리는 결과화면 시작! (A 영역)
               <div className="space-y-6 animate-in">
                 
                 {/* 1. AI Insight Card (JSON 데이터 직접 바인딩) */}
                 <div className="bg-card rounded-2xl border border-border shadow-sm p-6 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-blue-500 to-purple-500"></div>
+                  <div className="absolute top-0 left-0 w-1 h-full bg-linear-to-b from-blue-500 to-purple-500"></div>
                   <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
                     <Sparkles className="text-purple-500" size={20} /> AI Consultant Insight
                   </h2>
@@ -293,11 +857,11 @@ function App() {
                     </div>
                     <div className="bg-secondary/30 p-4 rounded-xl">
                       <span className="font-bold text-foreground block mb-1">핵심 인상 (Mood)</span>
-                      {result.mood}
+                      <p className="whitespace-pre-wrap">{result.mood}</p>
                     </div>
                     <div className="bg-secondary/30 p-4 rounded-xl">
                       <span className="font-bold text-foreground block mb-1">분야별 심층 조언 (Expert Advice)</span>
-                      {result.advice}
+                      <p className="whitespace-pre-wrap leading-relaxed">{result.advice}</p>
                     </div>
                   </div>
                 </div>
@@ -338,6 +902,35 @@ function App() {
                       </div>
                     </div>
                   </div>
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">시각 집중도</span>
+                      <span className="text-2xl font-bold font-mono">{result.saliency.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-purple-500 h-full rounded-full transition-all duration-1000" style={{ width: `${result.saliency}%` }}></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">대칭성</span>
+                      <span className="text-2xl font-bold font-mono">{result.symmetry.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-green-500 h-full rounded-full transition-all duration-1000" style={{ width: `${result.symmetry}%` }}></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">여백 비율</span>
+                      <span className="text-2xl font-bold font-mono">{result.space.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-blue-400 h-full rounded-full transition-all duration-1000" style={{ width: `${result.space}%` }}></div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 3. Color Palette */}
@@ -352,8 +945,8 @@ function App() {
                   </div>
                 </div>
 
-                {/* 📍 4. AI 추천 컬러칩 영역 (Day 8 핵심 기능!) */}
-                <div className="bg-card rounded-2xl border p-6 mt-6 border-primary/20 bg-primary/5 shadow-inner">
+                {/* 4. AI 추천 컬러칩 영역 */}
+                <div className="rounded-2xl border p-6 mt-6 border-primary/20 bg-primary/5 shadow-inner">
                   <h3 className="text-sm font-bold flex items-center gap-2 mb-4">
                     <Palette size={18} className="text-primary" /> AI Suggested Palette
                   </h3>
@@ -371,10 +964,40 @@ function App() {
                   </div>
                 </div>
 
-              </div> // 📍 결과 화면 종료 (space-y-6 div)
+                {/* 핀터레스트풍 레퍼런스 갤러리 */}
+                <div className="mt-8">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <ImageIcon size={20} className="text-primary" /> Benchmarking Guide
+                  </h3>
+
+                  {/* 벤치마킹 포인트 출력 구역*/}
+                  {result.benchmarking_point && (
+                  <div className="text-sm text-muted-foreground mb-6 bg-primary/5 p-5 rounded-2xl border border-primary/20">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="bg-primary text-white text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">Master's Guide</span>
+                      <span className="font-bold text-foreground">완성도를 높이는 벤치마킹 포인트</span>
+                    </div>
+                    {/* whitespace-pre-wrap을 넣어 줄바꿈이 보이게 함 */}
+                    <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
+                      {result.benchmarking_point}
+                    </p>
+                  </div>
+                )}
+
+                  <div className="columns-2 md:columns-3 gap-4 space-y-4">
+                    {result.reference_images?.map((url:string, idx: number) => (
+                      <div key={idx} className="break-inside-avoid rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-shadow border border-border">
+                        <img src={url} alt="Inspiration" className="w-full h-auto object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+
+              </div> //결과 화면 종료 (space-y-6 div)
             ) : (
-              // 📍 괄호가 닫히고 ":" 뒤에 오는 빈 상태 (B 영역)
-              <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-muted-foreground space-y-4 border-2 border-dashed border-border/50 rounded-3xl bg-secondary/20">
+              // 괄호가 닫히고 ":" 뒤에 오는 빈 상태 (B 영역)
+              <div className="h-full min-h-100 flex flex-col items-center justify-center text-muted-foreground space-y-4 border-2 border-dashed border-border/50 rounded-3xl bg-secondary/20">
                 <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center">
                   <Zap size={32} className="opacity-20" />
                 </div>
@@ -385,7 +1008,7 @@ function App() {
               </div>
             )}
           </div>
-
+         
         </div>
       </main>
     </div>
@@ -394,77 +1017,15 @@ function App() {
 
 export default App;
 
-==================================================FILE:./frontend/src/main.tsx
-==================================================
-
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
-
-
-==================================================FILE:./frontend/src/App.css
-==================================================
-
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
-
-==================================================FILE:./frontend/src/index.css
+==================================================FILE:.\frontend\src\index.css
 ==================================================
 
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
 
-/* 📍 1. 테일윈드 v4 엔진에 색깔 이름표 등록하기 */
+/* 1. 테일윈드 v4 엔진에 색깔 이름표 등록하기 */
 @theme {
-  /* 테일윈드가 bg-background, text-foreground 등을 알아듣게 만드는 마법 주문이야 */
+ 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card));
@@ -491,7 +1052,7 @@ createRoot(document.getElementById('root')!).render(
   --radius-sm: calc(var(--radius) - 6px);
 }
 
-/* 📍 2. 실제 색상 값 정의 (용용이가 고른 예쁜 색들!) */
+/* 2. 실제 색상 값 정의 */
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -539,19 +1100,34 @@ createRoot(document.getElementById('root')!).render(
   }
 }
 
-/* 📍 3. 이제 등록된 이름표를 사용하기 */
+/* 3. 이제 등록된 이름표를 사용하기 */
 @layer base {
   * {
-    /* 아까 등록한 --color-border 덕분에 이제 border-border를 사용할 수 있어! */
+  
     @apply border-border;
   }
   body {
-    /* 아까 등록한 --color-background 덕분에 이제 bg-background를 사용할 수 있어! */
+    
     @apply bg-background text-foreground transition-colors duration-300;
   }
 }
 
-==================================================FILE:./frontend/src/lib/utils.ts
+==================================================FILE:.\frontend\src\main.tsx
+==================================================
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
+==================================================FILE:.\frontend\src\lib\utils.ts
 ==================================================
 
 import { clsx, type ClassValue } from "clsx"
@@ -560,400 +1136,3 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
-
-
-==================================================FILE:./backend/app/models.py
-==================================================
-
-from sqlalchemy import Column, Integer, Float, String, Text
-from .database import Base
-
-class DesignHistory(Base):
-    __tablename__ = "design_history"
-    id = Column(Integer, primary_key=True, index=True)
-    brightness = Column(Float)
-    complexity = Column(Float)
-    saliency = Column(Float)
-    symmetry = Column(Float)
-    space = Column(Float)
-    colors = Column(String) # 리스트를 문자열로 저장
-    description = Column(Text)
-
-==================================================FILE:./backend/app/database.py
-==================================================
-
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-
-SQLALCHEMY_DATABASE_URL = "sqlite:///./mood_dna.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-==================================================FILE:./backend/app/__init__.py
-==================================================
-
-
-
-==================================================FILE:./backend/app/main.py
-==================================================
-
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-from app.services.analyzer import calculate_brightness
-from app.services.analyzer import get_brightness_description
-from app.services.analyzer import extract_color_dna
-from app.services.analyzer import calculate_complexity 
-from app.services.ai_consultant import consult_design
-from app.services.analyzer import calculate_saliency
-from app.services.analyzer import calculate_symmetry
-from app.services.analyzer import calculate_space_ratio
-from .database import engine, Base, get_db
-from .models import DesignHistory
-from sqlalchemy.orm import Session
-from fastapi import Depends
-import json
-
-from dotenv import load_dotenv
-
-
-app = FastAPI()
-load_dotenv()
-Base.metadata.create_all(bind=engine) # 테이블 생성
-
-
-
-# CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],#모든 곳에서 접속 허용
-    allow_methods=["*"],
-    allow_headers=["*"] 
-)
- 
-@app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)
-                        ,remove_bg: bool = Form(True)
-                        ,db: Session = Depends(get_db)
-):
-    image_bytes = await file.read()
-    
-    #여러 분석 함수 실행
-    brightness_score = calculate_brightness(image_bytes)
-    complexity_score = calculate_complexity(image_bytes) # 복잡도 계산
-    saliency = calculate_saliency(image_bytes) # 시각 집중도
-    symmetry = calculate_symmetry(image_bytes) # 대칭성
-    space = calculate_space_ratio(image_bytes) # 여백 비율
-    
-    
-    colors = extract_color_dna(image_bytes, k=5, remove_bg = remove_bg)
-    
-   # AI 컨설턴트에게 디자인 분석 요청
-    ai_feedback = consult_design(image_bytes,brightness_score, complexity_score, saliency, symmetry, space, colors)
-    
-    description = ai_feedback
-    
-    # DB에 저장
-    new_record = DesignHistory(
-        brightness=brightness_score,
-        complexity=complexity_score,
-        saliency=saliency,
-        symmetry=symmetry,
-        space=space,
-        colors=",".join(colors),
-        description=json.dumps(ai_feedback) # JSON 문자열로 저장
-    )
-    db.add(new_record)
-    db.commit()
-    
-
-    return {
-        **ai_feedback, # AI 피드백의 모든 키-값 쌍을 응답에 포함
-        "brightness": brightness_score, 
-        "complexity": complexity_score, # 결과에 추가
-        "saliency": saliency,
-        "symmetry": symmetry,
-        "space": space,
-        "description": description, 
-        "colors": colors
-    }
-
-==================================================FILE:./backend/app/services/analyzer.py
-==================================================
-
-import cv2
-import numpy as np
-from rembg import remove # 배경 제거 라이브러리
-
-# 1. 밝기 계산 
-def calculate_brightness(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        return 0.0
-    
-    brightness = np.mean(img)
-    return float(brightness)
-
-# 2. 밝기 설명 (점수에 따른 무드 설명)
-def get_brightness_description(score: float):
-    if score < 80:
-        return "Deep & Heavy: 묵직하고 고급스러운 무드"
-    elif score < 150:
-        return "Balanced & Neutral: 안정적이고 편안한 무드"
-    else:        
-        return "Bright & Minimal: 화사하고 깨끗한 미니멀 무드"
-
-# 3. 복잡도 계산 (Canny Edge Detection)
-def calculate_complexity(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        return 0.0
-
-    # 그레이스케일 변환 (윤곽선 따기 전 필수)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # 윤곽선 추출 (Canny 알고리즘)
-    edges = cv2.Canny(gray, 100, 200)
-    
-    # 전체 픽셀 중 윤곽선 픽셀이 차지하는 비율 계산
-    total_pixels = edges.size
-    edge_pixels = np.count_nonzero(edges)
-    
-    complexity_score = (edge_pixels / total_pixels) * 100 * 10 # 점수 보정 (보기 좋게)
-    return min(float(complexity_score), 100.0) # 최대 100점으로 제한
-
-# 4. [UPDATE] 색상 추출 (배경 제거 후 추출)
-def extract_color_dna(image_bytes, k=5, remove_bg=True):
-    if remove_bg:
-    # 1) 배경 제거 (rembg 사용)
-        try:
-            # rembg는 input/output이 바이너리 형태
-            output_bytes = remove(image_bytes)
-            nparr = np.frombuffer(output_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED) # 투명도(Alpha) 포함 로드
-        except Exception as e:
-            print(f"배경 제거 실패 (원본 사용): {e}")
-            img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8),cv2.IMREAD_COLOR)
-
-    else: # 배경 제거 없이 원본 이미지로 색상 추출
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-
-    if img is None:
-        return []
-    
-    # 2) 데이터 전처리
-    # 투명한 배경이 있다면(채널이 4개라면), 투명하지 않은 픽셀만 골라냄
-    if img.shape[2] == 4:
-        # Alpha 채널이 0이 아닌(투명하지 않은) 픽셀만 선택
-        mask = img[:, :, 3] > 0
-        pixels = img[mask]
-        if len(pixels) == 0: return []
-        data = pixels[:, :3] # Alpha 제외하고 RGB만 가져오기
-    else:
-        data = img.reshape((-1, 3))
-
-    data = np.float32(data)
-  
-    # 3) K-means 클러스터링
-    if len(data) < k: # 픽셀 수가 k보다 적으면 예외 처리
-        k = len(data)
-        
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-    _, labels, centers = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-    
-    centers = centers.astype(int)
-    
-    
-    # OpenCV는 BGR, 웹은 RGB이므로 변환 필요 (rembg 결과는 RGB일 수 있으나 안전하게 처리)
-    # rembg 결과는 보통 RGB지만 cv2.imdecode하면 BGR이 됨.
-    if img.shape[2] == 4:
-        # rembg를 거친 경우 BGR로 읽혔을 것이므로 RGB로 변환
-        centers_rgb = centers[:, ::-1]
-    else:
-        # 원본도 BGR
-        centers_rgb = centers[:, ::-1]
-    
-    hex_colors = [
-        f"#{r:02x}{g:02x}{b:02x}"
-        for(r,g,b) in centers_rgb
-    ]
-    return hex_colors
-
-# 5. 추가 분석 - 시각적 중요도 (Saliency)
-def calculate_saliency(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        return 0.0
-
-    # Saliency Map 계산
-    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
-    (success, saliencyMap) = saliency.computeSaliency(img)
-    
-    if success:
-        score = np.mean(saliencyMap) * 100 * 5
-        return min(float(score), 100.0) # 최대 100점으로 제한  
-    return  0.0
-
-# 대칭성 계산 (Symmetry)
-def calculate_symmetry(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img is None: return 0.0
-
-    h, w, _ = img.shape
-    half_w = w // 2
-
-    # 1. 왼쪽과 오른쪽 자르기
-    left_part = img[:, :half_w]
-    right_part = img[:, w - half_w:] # 홀수 너비 대응
-
-    # 2. 오른쪽 부분을 거울처럼 뒤집기
-    right_flipped = cv2.flip(right_part, 1)
-
-    # 3. 두 부분의 차이 계산
-    diff = cv2.absdiff(left_part, right_flipped)
-    mean_diff = np.mean(diff)
-
-    # 4. 차이가 적을수록 대칭점수가 높음 (100점에서 감점하는 방식)
-    score = 100 - (mean_diff / 255 * 100 * 2) 
-    return max(float(score), 0.0)
-
-# 6. 여백 비율 계산 (Space Ratio)
-def calculate_space_ratio(image_bytes):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img is None: return 0.0
-
-    # 1. 그레이스케일 변환 후 히스토그램으로 가장 많이 등장하는 배경색 찾기
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # 2. 배경이라고 판단되는 밝기 범위 (보통 아주 밝거나 아주 어두움)
-    # 여기서는 단순화해서 240 이상의 밝은 영역을 여백으로 간주한다.
-    _, white_mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    
-    # 3. 전체 면적 대비 여백 면적 비율 계산
-    total_pixels = gray.size
-    white_pixels = np.count_nonzero(white_mask)
-    
-    ratio = (white_pixels / total_pixels) * 100
-    return float(ratio)
-
-==================================================FILE:./backend/app/services/ai_consultant.py
-==================================================
-
-from google import genai
-from google.genai import types
-import os
-from dotenv import load_dotenv
-import json
-
-# 파일 경로 고정
-current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, "..", "..","..", ".env")
-
-load_dotenv(dotenv_path=env_path)
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-#글자 깨짐 방지를 위해 영어로만 출력!
-if not API_KEY:
-    print("[ERROR] API_KEY not found in .env file")
-else:
-    print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
-
-
-def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space, colors):
-
-    try:
-        client = genai.Client(api_key=API_KEY)
-        
-        prompt = f"""
-                당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
-                인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
-                해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
-                #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
-                
-                [1단계: 분야 판별 및 페르소나 설정]
-                이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
-                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시.
-                2. 인터페이스(UI/UX): 가용성, 시각적 위계, 반응성 중시.
-                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시.
-                4. 산업/제품(Industrial): 형태와 기능의 조화, 질감, 인체공학적 시각 요소 중시. 운송 수단(자동차,자전거), 가전, 가구 등 실제 물리적 제품.실용적 디자인 뿐만 아니라 예술적/ 실험적 형태의 시제품도 포함.
-                5. 공간/인테리어(Interior): 분위기, 조명 평형, 공간 대비 중시.
-                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시.
-
-                [2단계: 데이터의 분야별 재해석]
-                동일한 수치라도 분야에 따라 다르게 해석하세요.
-                - 예(복잡도): UI에서는 '낮음'이 미덕이지만, 화려한 포스터에서는 '낮음'이 '단조로움'일 수 있음.
-                - 예(대칭성): 로고에서는 '안정감'이지만, 현대 건축에서는 '지루함'일 수 있음.
-                - 예(형태 및 곡률): 캐릭터 디자인에서 곡선 위주의 둥글둥글한 형태는 무해함과 귀여움을 상징하지만, 게임 캐릭터의 날카로운 직선과 삼각형 구조는 강력함과 긴장감을 의미함.
-                - 예(대칭성): 높은 대칭성은 캐릭터의 안정감을 주어 친근하게 느껴지게 하지만, 의도적인 비대칭은 캐릭터에 생동감과 성격을 부여함.
-
-                [데이터 분석 결과]
-                - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
-                - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
-                - 주요 색상: {', '.join(colors)}
-
-                [3단계: 최종 비평 리포트 - 한국어로 작성]
-                1. 판별된 디자인 분야: (예: 산업 디자인 - 가전제품)
-                2. 핵심 인상 (Mood): 해당 분야의 전문 용어를 사용하여 분위기를 2줄 내외로 묘사.
-                3. 분야별 심층 조언 (Expert Advice): 
-                - 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
-                - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 3줄 이상 작성.
-                4. (선택 사항) 추가적으로, 해당 디자인이 특정 유명 작품이나 스타일과 유사하다면, 그 작품/스타일과의 비교를 통해 조언을 보강하세요.
-                5. (선택 사항) 만약 데이터가 모순적이거나 해석이 어려운 경우, '데이터 해석의 난점'을 짧게 언급하고, 그럼에도 불구하고 도출할 수 있는 인사이트를 제시하세요.
-                6. (선택 사항) 마지막으로, 해당 디자인이 현재 트렌드와 어떻게 부합하거나 벗어나는지 간략히 언급하여, 실무자에게 '트렌드 적합성'에 대한 시각을 제공하세요.
-                7. (선택 사항) 디자인의 '목적'이 명확하다면, 그 목적에 대한 달성도를 평가하고, 만약 개선이 필요하다면 구체적인 개선 방향을 제시하세요.
-                8. (선택 사항) 만약 입력된 데이터가 특정 디자인 원칙(예: 균형, 대비, 강조 등)과 관련이 있다면, 그 원칙에 대한 분석과 조언을 추가하세요.
-                9. (선택 사항) 디자인이 특정 문화적 맥락이나 타겟 오디언스와 관련이 있다면, 그 맥락에 대한 분석과 조언을 추가하세요.
-                10.캐릭터 특화 조언 가이드 (참고)
-                - 현재 데이터가 캐릭터의 '귀여움'이나 '역동성' 등 설계 목적에 부합하는지 분석.
-                - 캐릭터의 등신대 비율과 눈의 위치 등 조형적 특징이 주는 심리적 효과를 비평에 포함.
-                - 만약 디자인이 '의도된 촌스러움'이나 '키치한 감성'을 지향한다면, 그 맥락에 맞춰 분석과 조언을 제공.
-
-                선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
-                
-                [출력 형식 - JSON]
-                주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
-                {{
-                "category": "판별된 분야",
-                "mood": "작성 가이드를 따른 핵심 인상",
-                "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용",
-                "unsplash_keywords": ["추천 영문 검색어 3개"],
-                "suggested_palette": ["추천 HEX 컬러칩 3개"]
-                }}
-
-                """
-        contents =[
-            {"mime_type": "image/jpeg", "data": image_bytes},
-            prompt
-        ]
-        
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt
-            ]
-        )
-        return json.loads(response.text)
-    
-    except Exception as e:
-        # 터미널 에러 출력도 추가
-        print(f"[AI Error] {e}")
-        return "Mood: AI 분석에 실패했습니다.\nAdvice: 네트워크 상태를 확인해주세요."

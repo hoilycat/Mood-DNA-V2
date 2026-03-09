@@ -1,9 +1,8 @@
 import { useState, useEffect, type ChangeEvent } from 'react';
 import axios from 'axios';
-import { ImageIcon, Loader2, Sparkles, Activity, Grid, Maximize, Palette, Sun, Moon, Zap } from 'lucide-react';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
+import { ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, Sun, Moon, Zap } from 'lucide-react';
+import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
 
-// 📍 1. 인터페이스 업데이트 (Day 8: 백엔드 JSON 구조와 일치)
 interface MoodDnaResult {
   brightness: number;
   complexity: number;
@@ -14,8 +13,10 @@ interface MoodDnaResult {
   category: string;
   mood: string;
   advice: string;
+  benchmarking_point: string;
   unsplash_keywords: string[];
   suggested_palette: string[];
+  reference_images: string[];
 }
 
 function App() {
@@ -101,7 +102,7 @@ function App() {
                     <p className="text-sm font-medium">Drag & drop or click to upload</p>
                   </div>
                 )}
-                <label className="absolute inset-0 cursor-pointer">
+                <label className="absolute inset-0 cursor-pointer z-20">
                   <input type="file" className="hidden" onChange={handleFileChange} accept="image/*" />
                 </label>
               </div>
@@ -123,12 +124,12 @@ function App() {
           {/* Right Panel: Analysis Results */}
           <div className="lg:col-span-7 space-y-6">
             {result ? (
-              // 📍 괄호가 열리는 결과화면 시작! (A 영역)
+              // 괄호가 열리는 결과화면 시작! (A 영역)
               <div className="space-y-6 animate-in">
                 
                 {/* 1. AI Insight Card (JSON 데이터 직접 바인딩) */}
                 <div className="bg-card rounded-2xl border border-border shadow-sm p-6 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-blue-500 to-purple-500"></div>
+                  <div className="absolute top-0 left-0 w-1 h-full bg-linear-to-b from-blue-500 to-purple-500"></div>
                   <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
                     <Sparkles className="text-purple-500" size={20} /> AI Consultant Insight
                   </h2>
@@ -138,11 +139,11 @@ function App() {
                     </div>
                     <div className="bg-secondary/30 p-4 rounded-xl">
                       <span className="font-bold text-foreground block mb-1">핵심 인상 (Mood)</span>
-                      {result.mood}
+                      <p className="whitespace-pre-wrap">{result.mood}</p>
                     </div>
                     <div className="bg-secondary/30 p-4 rounded-xl">
                       <span className="font-bold text-foreground block mb-1">분야별 심층 조언 (Expert Advice)</span>
-                      {result.advice}
+                      <p className="whitespace-pre-wrap leading-relaxed">{result.advice}</p>
                     </div>
                   </div>
                 </div>
@@ -183,6 +184,35 @@ function App() {
                       </div>
                     </div>
                   </div>
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">시각 집중도</span>
+                      <span className="text-2xl font-bold font-mono">{result.saliency.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-purple-500 h-full rounded-full transition-all duration-1000" style={{ width: `${result.saliency}%` }}></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">대칭성</span>
+                      <span className="text-2xl font-bold font-mono">{result.symmetry.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-green-500 h-full rounded-full transition-all duration-1000" style={{ width: `${result.symmetry}%` }}></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-card rounded-2xl border border-border p-5 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm text-muted-foreground font-medium flex items-center gap-2">여백 비율</span>
+                      <span className="text-2xl font-bold font-mono">{result.space.toFixed(0)}</span>
+                    </div>
+                    <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
+                      <div className="bg-blue-400 h-full rounded-full transition-all duration-1000" style={{ width: `${result.space}%` }}></div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 3. Color Palette */}
@@ -197,8 +227,8 @@ function App() {
                   </div>
                 </div>
 
-                {/* 📍 4. AI 추천 컬러칩 영역 (Day 8 핵심 기능!) */}
-                <div className="bg-card rounded-2xl border p-6 mt-6 border-primary/20 bg-primary/5 shadow-inner">
+                {/* 4. AI 추천 컬러칩 영역 */}
+                <div className="rounded-2xl border p-6 mt-6 border-primary/20 bg-primary/5 shadow-inner">
                   <h3 className="text-sm font-bold flex items-center gap-2 mb-4">
                     <Palette size={18} className="text-primary" /> AI Suggested Palette
                   </h3>
@@ -216,10 +246,40 @@ function App() {
                   </div>
                 </div>
 
-              </div> // 📍 결과 화면 종료 (space-y-6 div)
+                {/* 핀터레스트풍 레퍼런스 갤러리 */}
+                <div className="mt-8">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <ImageIcon size={20} className="text-primary" /> Benchmarking Guide
+                  </h3>
+
+                  {/* 벤치마킹 포인트 출력 구역*/}
+                  {result.benchmarking_point && (
+                  <div className="text-sm text-muted-foreground mb-6 bg-primary/5 p-5 rounded-2xl border border-primary/20">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="bg-primary text-white text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">Master's Guide</span>
+                      <span className="font-bold text-foreground">완성도를 높이는 벤치마킹 포인트</span>
+                    </div>
+                    {/* whitespace-pre-wrap을 넣어 줄바꿈이 보이게 함 */}
+                    <p className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
+                      {result.benchmarking_point}
+                    </p>
+                  </div>
+                )}
+
+                  <div className="columns-2 md:columns-3 gap-4 space-y-4">
+                    {result.reference_images?.map((url:string, idx: number) => (
+                      <div key={idx} className="break-inside-avoid rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-shadow border border-border">
+                        <img src={url} alt="Inspiration" className="w-full h-auto object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+
+              </div> //결과 화면 종료 (space-y-6 div)
             ) : (
-              // 📍 괄호가 닫히고 ":" 뒤에 오는 빈 상태 (B 영역)
-              <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-muted-foreground space-y-4 border-2 border-dashed border-border/50 rounded-3xl bg-secondary/20">
+              // 괄호가 닫히고 ":" 뒤에 오는 빈 상태 (B 영역)
+              <div className="h-full min-h-100 flex flex-col items-center justify-center text-muted-foreground space-y-4 border-2 border-dashed border-border/50 rounded-3xl bg-secondary/20">
                 <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center">
                   <Zap size={32} className="opacity-20" />
                 </div>
@@ -230,7 +290,7 @@ function App() {
               </div>
             )}
           </div>
-
+         
         </div>
       </main>
     </div>

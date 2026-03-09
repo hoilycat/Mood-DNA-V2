@@ -1,9 +1,9 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
 
-/* 📍 1. 테일윈드 v4 엔진에 색깔 이름표 등록하기 */
+/* 1. 테일윈드 v4 엔진에 색깔 이름표 등록하기 */
 @theme {
-  /* 테일윈드가 bg-background, text-foreground 등을 알아듣게 만드는 마법 주문이야 */
+ 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card));
@@ -30,7 +30,7 @@
   --radius-sm: calc(var(--radius) - 6px);
 }
 
-/* 📍 2. 실제 색상 값 정의 (용용이가 고른 예쁜 색들!) */
+/* 2. 실제 색상 값 정의 */
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -78,14 +78,14 @@
   }
 }
 
-/* 📍 3. 이제 등록된 이름표를 사용하기 */
+/* 3. 이제 등록된 이름표를 사용하기 */
 @layer base {
   * {
-    /* 아까 등록한 --color-border 덕분에 이제 border-border를 사용할 수 있어! */
+  
     @apply border-border;
   }
   body {
-    /* 아까 등록한 --color-background 덕분에 이제 bg-background를 사용할 수 있어! */
+    
     @apply bg-background text-foreground transition-colors duration-300;
   }
 }
