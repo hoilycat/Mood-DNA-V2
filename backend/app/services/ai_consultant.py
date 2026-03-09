@@ -116,12 +116,12 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
         return json.loads(response.text)
     
     except Exception as e:
-        # 터미널 에러 출력도 추가
         print(f"[AI Error] {e}")
         return {
-            "category": "분석 실패",
-            "mood": "AI 분석 중 오류가 발생했습니다.",
-            "advice": f"네트워크 상태나 API 설정을 확인해주세요. (에러: {str(e)})",
-            "unsplash_keywords": ["error"],
-            "suggested_palette": ["#CCCCCC", "#999999", "#666666"]
+            "category": "분석 일시 중단",
+            "mood": "API 사용량이 초과되었습니다.",
+            "advice": "구글 AI 할당량이 다 되었습니다. 약 1분 후 다시 시도해주세요.",
+            "benchmarking_point": "분석이 중단되어 가이드를 생성할 수 없습니다.",
+            "unsplash_keywords": ["abstract painting"], # "error" 대신 예쁜 단어로 교체
+            "suggested_palette": ["#4285F4", "#DB4437", "#F4B400"] 
         }

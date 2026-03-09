@@ -220,7 +220,9 @@ function App() {
                   <h3 className="text-sm font-semibold text-muted-foreground mb-4 uppercase tracking-wider flex items-center gap-2"><Palette size={16} /> Extracted Palette</h3>
                   <div className="flex w-full h-24 rounded-xl overflow-hidden ring-1 ring-border shadow-inner">
                     {result.colors.map((color, idx) => (
-                      <div key={idx} className="flex-1 h-full flex items-end justify-center pb-2 group cursor-pointer transition-all hover:flex-[1.5]" style={{ backgroundColor: color }} onClick={() => { navigator.clipboard.writeText(color); alert(`Copied: ${color}`); }}>
+                      <div 
+                        key={idx} 
+                        className="flex-1 h-full flex items-end justify-center pb-2 group cursor-pointer transition-all hover:flex-[1.5]" style={{ backgroundColor: color }} onClick={() => { navigator.clipboard.writeText(color); alert(`Copied: ${color}`); }}>
                         <span className="text-[10px] font-mono bg-black/50 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">{color}</span>
                       </div>
                     ))}
