@@ -18,12 +18,6 @@ def calculate_brightness(image_bytes):
         return float(np.mean(pixels)) if len(pixels) > 0 else 0.0
     return float(np.mean(img))
 
-def get_brightness_description(score: float):
-    if score < 80: return "Deep & Heavy: 묵직하고 고급스러운 무드"
-    elif score < 150: return "Balanced & Neutral: 안정적이고 편안한 무드"
-    else: return "Bright & Minimal: 화사하고 깨끗한 미니멀 무드"
-
-
 def calculate_complexity(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -31,117 +25,62 @@ def calculate_complexity(image_bytes):
     edges = cv2.Canny(gray, 100, 200)
     if is_logo_mode:
         mask = img[:, :, 3] > 0
-        foreground_area = np.count_nonzero(mask)
-        edge_pixels = np.count_nonzero(edges & mask)
-        score = (edge_pixels / foreground_area) * 100 * 15 if foreground_area > 0 else 0.0
+        area = np.count_nonzero(mask)
+        score = (np.count_nonzero(edges & mask) / area) * 1500 if area > 0 else 0.0
     else:
-        score = (np.count_nonzero(edges) / edges.size) * 100 * 10
-   
+        score = (np.count_nonzero(edges) / edges.size) * 1000
     return min(float(score), 100.0)
 
 def calculate_space_ratio(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
     if is_logo_mode:
-        transparent_pixels = np.count_nonzero(img[:, :, 3] == 0)
-        return float((transparent_pixels / (img.shape[0] * img.shape[1])) * 100)
+        return float((np.count_nonzero(img[:, :, 3] == 0) / (img.shape[0] * img.shape[1])) * 100)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, white_mask = cv2.threshold(gray, 235, 255, cv2.THRESH_BINARY)
-    _, black_mask = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY_INV)
-    return float((np.count_nonzero(white_mask | black_mask) / gray.size) * 100)
+    _, white = cv2.threshold(gray, 235, 255, cv2.THRESH_BINARY)
+    _, black = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY_INV)
+    return float((np.count_nonzero(white | black) / gray.size) * 100)
 
 def calculate_symmetry(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
     h, w = img.shape[:2]
-    half_w = w // 2
-    left = img[:, :half_w]
-    right = cv2.flip(img[:, w - half_w:], 1)
+    half = w // 2
+    left, right = img[:, :half], cv2.flip(img[:, w - half:], 1)
     if is_logo_mode:
-        diff = cv2.absdiff(left, right)
-        score = 100 - (np.mean(diff) / 255 * 100 * 2)
+        score = 100 - (np.mean(cv2.absdiff(left, right)) / 255 * 200)
     else:
-        left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
-        right_gray = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)
-        diff = abs(np.mean(left_gray) - np.mean(right_gray))
-        score = 100 - (diff / 255 * 100 * 5)
+        score = 100 - (abs(np.mean(left) - np.mean(right)) / 255 * 500)
     return max(float(score), 0.0)
 
 def calculate_saliency(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
-    saliency_img = img[:, :, :3] if is_logo_mode else img
     saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
-    success, saliencyMap = saliency.computeSaliency(saliency_img)
-    if success:
-        score = np.mean(saliencyMap) * (500 if is_logo_mode else 300)
-        return min(float(score), 100.0)
-    return 0.0
+    success, map = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
+    return min(float(np.mean(map) * 500), 100.0) if success else 0.0
 
-def extract_color_dna(image_bytes, k=16, remove_bg=False): # k를 16으로 대폭 늘려 모든 미세 색상 다 추출
+def extract_color_dna(image_bytes, k=16, remove_bg=False):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return []
-    
-    # 1. 배경 제외 픽셀 추출
     pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
     if len(pixels) < k: return []
-    
     data = np.float32(pixels)
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-    _, labels, centers = cv2.kmeans(data, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-    
+    _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS+10, 10, 1.0), 10, 0)
     counts = np.bincount(labels.flatten())
-    total_pixels = len(pixels)
+    total = len(pixels)
     
-    color_candidates = []
+    candidates = []
     for i in range(len(centers)):
         rgb = centers[i][::-1]
         hsv = cv2.cvtColor(np.uint8([[[centers[i][0], centers[i][1], centers[i][2]]]]), cv2.COLOR_BGR2HSV)[0][0]
-        s, v = hsv[1], hsv[2]
-        percentage = counts[i] / total_pixels
-        
-        # [기초 필터링] 너무 어둡거나 너무 밝은 배경색 제거
-        if v < 30 or v > 250: continue
-        
-        color_candidates.append({
-            'rgb': rgb,
-            'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}",
-            'score': s * percentage # 선명도와 비중의 조화
-        })
+        if hsv[2] < 30 or hsv[2] > 250: continue # 너무 어둡거나 밝은 색 제거
+        candidates.append({'rgb': rgb, 'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}", 'score': hsv[1] * (counts[i]/total)})
     
-    # 점수 높은 순 정렬
-    color_candidates.sort(key=lambda x: x['score'], reverse=True)
-    
-    final_palette = []
-    
-    # 💡 [핵심: 색상 중복 제거 로직]
-    for candidate in color_candidates:
-        if len(final_palette) >= 5: break
-        
-        # 첫 번째 색상은 무조건 추가
-        if not final_palette:
-            final_palette.append(candidate)
-            continue
-        
-        # 기존에 뽑힌 색상들과 "색상 차이"가 얼마나 나는지 확인
-        is_different = True
-        for selected in final_palette:
-            # RGB 거리 계산 (Euclidean Distance)
-            dist = np.linalg.norm(np.array(candidate['rgb']) - np.array(selected['rgb']))
-            # 거리가 60보다 작으면 "너무 비슷한 색(보라색 잔상 등)"으로 보고 버림
-            if dist < 60: 
-                is_different = False
-                break
-        
-        if is_different:
-            final_palette.append(candidate)
-
-    # 최종 HEX값만 추출
-    result_hex = [c['hex'] for c in final_palette]
-
-    # 만약 결과가 너무 없으면 비중순으로 강제 복구
-    if not result_hex:
-        sorted_indices = np.argsort(counts)[::-1]
-        return [f"#{int(centers[i][2]):02x}{int(centers[i][1]):02x}{int(centers[i][0]):02x}" for i in sorted_indices[:5]]
-
-    return result_hex
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    final = []
+    for c in candidates:
+        if len(final) >= 5: break
+        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 60 for f in final):
+            final.append(c)
+    return [c['hex'] for c in final]

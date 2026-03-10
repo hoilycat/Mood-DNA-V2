@@ -88,7 +88,7 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
                 "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
                 "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
                 "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
-                "unsplash_keywords": ["추천 영문 검색어 3개"],
+                "design_keywords":  ["추상적 단어 금지. 'flat design', 'swiss style', 'bold typography' 같은 구체적 시각 스타일 키워드 3개"],
                 "suggested_palette": ["추천 HEX 컬러칩 3개"]
                 }}
 

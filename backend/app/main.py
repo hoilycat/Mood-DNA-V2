@@ -1,68 +1,75 @@
-from app.services.unsplash_service import get_reference_images
+from app.services.google_search import get_reference_images
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from app.services.analyzer import calculate_brightness
-from app.services.analyzer import get_brightness_description
-from app.services.analyzer import extract_color_dna
-from app.services.analyzer import calculate_complexity 
+from app.services.analyzer import (
+    calculate_brightness, 
+    extract_color_dna, 
+    calculate_complexity, 
+    calculate_saliency, 
+    calculate_symmetry, 
+    calculate_space_ratio
+)
 from app.services.ai_consultant import consult_design
-from app.services.analyzer import calculate_saliency
-from app.services.analyzer import calculate_symmetry
-from app.services.analyzer import calculate_space_ratio
 from .database import engine, Base, get_db
 from .models import DesignHistory
 from sqlalchemy.orm import Session
 from fastapi import Depends
 from rembg import remove
 import json
-
 from dotenv import load_dotenv
-
 
 app = FastAPI()
 load_dotenv()
 Base.metadata.create_all(bind=engine) # 테이블 생성
 
-
-
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],#모든 곳에서 접속 허용
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"] 
 )
  
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)
-                        ,remove_bg: bool = Form(True)
-                        ,db: Session = Depends(get_db)
+async def analyze_image(
+    file: UploadFile = File(...),
+    remove_bg: bool = Form(True),
+    db: Session = Depends(get_db)
 ):
+    # 1. 이미지 바이트 읽기
     image_bytes = await file.read()
     
-    analyze_bytes =image_bytes
+    # 2. 배경 제거 처리 (여기서 딱 한 번만 수행!)
+    analyze_bytes = image_bytes
     if remove_bg:
         try:   
-            analyze_bytes = remove(image_bytes)
+            analyze_bytes = remove(image_bytes) # 배경이 제거된 바이트 생성
         except Exception as e:
-            print(f"배경 제거 실패:{e}")
+            print(f"배경 제거 실패: {e}")
     
-    #여러 분석 함수 실행
+    # 3. 분석 함수 실행 (배경 제거된 analyze_bytes를 재사용)
     brightness_score = calculate_brightness(analyze_bytes)
-    complexity_score = calculate_complexity(analyze_bytes) # 복잡도 계산
-    saliency = calculate_saliency(analyze_bytes) # 시각 집중도
-    symmetry = calculate_symmetry(analyze_bytes) # 대칭성
-    space = calculate_space_ratio(analyze_bytes) # 여백 비율
-     
-    colors = extract_color_dna(analyze_bytes, k=5, remove_bg = remove_bg)
+    complexity_score = calculate_complexity(analyze_bytes)
+    saliency = calculate_saliency(analyze_bytes)
+    symmetry = calculate_symmetry(analyze_bytes)
+    space = calculate_space_ratio(analyze_bytes)
     
-   # AI 컨설턴트에게 디자인 분석 요청
-    ai_feedback = consult_design(analyze_bytes,brightness_score, complexity_score, saliency, symmetry, space, colors)
-    reference_images = await get_reference_images(ai_feedback.get("unsplash_keywords",[])) 
+    # 💡 중요: extract_color_dna 내에서 배경 제거를 또 하지 않도록 remove_bg=False로 설정
+    colors = extract_color_dna(analyze_bytes, k=5, remove_bg=False)
     
-    description = ai_feedback
+    # 4. AI 컨설턴트에게 분석 요청
+    ai_feedback = consult_design(
+        analyze_bytes, brightness_score, complexity_score, 
+        saliency, symmetry, space, colors
+    )
     
-    # DB에 저장
+    # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
+    # AI가 준 키워드 리스트를 사용하여 검색 (JSON 키값은 ai_consultant.py와 맞춤)
+    keywords = ai_feedback.get("design_keywords", [])
+    category = ai_feedback.get("category", "") # 카테고리 추출
+    reference_images = await get_reference_images(keywords, category) # 매개변수 추가
+    
+    # 6. DB에 기록 저장
     new_record = DesignHistory(
         brightness=brightness_score,
         complexity=complexity_score,
@@ -70,20 +77,19 @@ async def analyze_image(file: UploadFile = File(...)
         symmetry=symmetry,
         space=space,
         colors=",".join(colors),
-        description=json.dumps(ai_feedback) # JSON 문자열로 저장
+        description=json.dumps(ai_feedback, ensure_ascii=False) # 한글 깨짐 방지
     )
     db.add(new_record)
     db.commit()
     
-
+    # 7. 최종 결과 반환
     return {
-        **ai_feedback, # AI 피드백의 모든 키-값 쌍을 응답에 포함
+        **ai_feedback,  # AI 피드백(category, mood, advice, benchmarking_point 등)
         "brightness": brightness_score, 
-        "complexity": complexity_score, # 결과에 추가
+        "complexity": complexity_score,
         "saliency": saliency,
         "symmetry": symmetry,
         "space": space,
-        "description": description, 
         "colors": colors,
         "reference_images": reference_images
     }
