@@ -60,13 +60,18 @@ def calculate_saliency(image_bytes):
     success, map = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
     return min(float(np.mean(map) * 500), 100.0) if success else 0.0
 
-def extract_color_dna(image_bytes, k=16, remove_bg=False):
+def extract_color_dna(image_bytes, k=12, remove_bg=False):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return []
+    
+    # 배경 제외 픽셀 추출
     pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
     if len(pixels) < k: return []
+    
     data = np.float32(pixels)
-    _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS+10, 10, 1.0), 10, 0)
+    # K-means 클러스터링
+    _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS + 10, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
+    
     counts = np.bincount(labels.flatten())
     total = len(pixels)
     
@@ -74,13 +79,30 @@ def extract_color_dna(image_bytes, k=16, remove_bg=False):
     for i in range(len(centers)):
         rgb = centers[i][::-1]
         hsv = cv2.cvtColor(np.uint8([[[centers[i][0], centers[i][1], centers[i][2]]]]), cv2.COLOR_BGR2HSV)[0][0]
-        if hsv[2] < 30 or hsv[2] > 250: continue # 너무 어둡거나 밝은 색 제거
-        candidates.append({'rgb': rgb, 'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}", 'score': hsv[1] * (counts[i]/total)})
+        percentage = counts[i] / total
+        
+        # [필터링 완화] 너무 미세한 노이즈(1% 미만)만 제거하고 검은색/흰색도 포함시킴
+        if percentage < 0.01: continue
+        
+        # [점수 계산] 면적(percentage)이 큰 것을 우선하되, 
+        # 채도(s)가 높은 색상에 약간의 가산점을 주어 '칙칙한 테두리색'보다 우선순위를 높임
+        s_weight = 1 + (hsv[1] / 255) 
+        score = percentage * s_weight
+        
+        candidates.append({
+            'rgb': rgb,
+            'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}",
+            'score': score
+        })
     
+    # 점수 순 정렬
     candidates.sort(key=lambda x: x['score'], reverse=True)
+    
     final = []
     for c in candidates:
         if len(final) >= 5: break
-        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 60 for f in final):
+        # 💡 [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
+        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 45 for f in final):
             final.append(c)
+            
     return [c['hex'] for c in final]

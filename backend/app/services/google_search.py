@@ -9,12 +9,13 @@ GOOGLE_SEARCH_CX = os.getenv("GOOGLE_SEARCH_CX")
 
 async def get_reference_images(keywords: list, category: str): # category 매개변수 추가
     if not keywords or not GOOGLE_API_KEY:
+        print("[Google Search] 키워드나 API 키가 누락되었습니다.")
         return []
     
     # 1. 단어 정제
     raw_string = " ".join(keywords).lower()
     forbidden = ["fedex", "mcdonalds", "apple", "logo", "nike", "disney", "mega", "coffee"]
-    clean_words = [w for w in raw_string.replace(',', ' ').split() if w not in forbidden and len(w) > 2]
+    clean_words = [w for w in raw_string.replace(',', ' ').split() if w not in forbidden and len(w) > 1]
     
     if not clean_words:
         clean_words = ["design"]
@@ -39,6 +40,11 @@ async def get_reference_images(keywords: list, category: str): # category 매개
 
     # 3. 검색어 조합 (앞의 핵심 키워드 2개 + 분야 맞춤 서픽스)
     search_query = f"{' '.join(clean_words[:2])} {suffix}"
+    
+    # 터미널에 표시
+    print(f"\n[Google Search API 호출] -------------------")
+    print(f"검색어: {search_query}")
+    print(f"----------------------------------------------\n")
 
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -57,6 +63,21 @@ async def get_reference_images(keywords: list, category: str): # category 매개
             items = data.get("items", [])
             # 검색 결과에서 이미지 원본 링크만 뽑아서 리스트로 반환
             return [item["link"] for item in items if "link" in item]
+        except Exception as e:
+            print(f"[Google Search Error] {e}")
+            return []
+        
+        # [디버깅 코드 추가] 실제로 이미지를 몇 개 가져오는지 터미널에 찍어보기
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, params=params)
+            data = response.json()
+            items = data.get("items", [])
+            
+            # 💡 여기 중요! 터미널에 아래 내용이 찍히는지 확인하세요.
+            links = [item["link"] for item in items if "link" in item]
+            print(f"[Google Search] {len(links)}개의 이미지를 찾았습니다.")
+            return links
         except Exception as e:
             print(f"[Google Search Error] {e}")
             return []

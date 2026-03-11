@@ -98,6 +98,7 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
             prompt
         ]
         
+ 
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
@@ -125,3 +126,43 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
             "unsplash_keywords": ["abstract painting"], # "error" 대신 예쁜 단어로 교체
             "suggested_palette": ["#4285F4", "#DB4437", "#F4B400"] 
         }
+        
+def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
+    try:
+        client = genai.Client(api_key=API_KEY)
+        
+        prompt = f"""
+        당신은 세계적인 디자인 비평가입니다. 두 개의 디자인 시안(A안, B안)을 비교 분석하여 최적의 선택을 제안하세요.
+        
+        [데이터 분석 정보]
+        - A안: 밝기 {stats1['brightness']:.1f}, 복잡도 {stats1['complexity']:.1f}
+        - B안: 밝기 {stats2['brightness']:.1f}, 복잡도 {stats2['complexity']:.1f}
+        
+        [비교 가이드]
+        1. 시각적 균형과 조형미: 어느 쪽이 더 안정적이고 완성도 높은 형태를 가졌는가?
+        2. 목적 전달력: 브랜드의 핵심 가치를 전달하기에 더 적합한 스타일은 무엇인가?
+        3. 실무적 조언: 선택되지 않은 안에서 가져올 수 있는 장점이나, 공통적으로 개선해야 할 점.
+        
+        [출력 형식 - JSON]
+        {{
+            "winner": "A 또는 B",
+            "summary": "한 줄 총평",
+            "detail_comparison": "두 시안의 차이점과 특징 비교 (줄바꿈 \\n 포함)",
+            "reasoning": "승자를 선택한 결정적인 이유 (줄바꿈 \\n 포함)",
+            "suggested_action": "더 나은 결과를 위해 다음 단계에서 수행해야 할 작업 (줄바꿈 \\n 포함)"
+        }}
+        """
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
+                types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
+                prompt
+            ],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"[AI Comparison Error] {e}")
+        return {"winner": "N/A", "summary": "분석 중 오류 발생", "detail_comparison": str(e), "reasoning": "N/A", "suggested_action": "N/A"}

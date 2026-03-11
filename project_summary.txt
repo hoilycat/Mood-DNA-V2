@@ -59,7 +59,7 @@ from app.services.analyzer import (
     calculate_symmetry, 
     calculate_space_ratio
 )
-from app.services.ai_consultant import consult_design
+from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
 from .models import DesignHistory
 from sqlalchemy.orm import Session
@@ -143,6 +143,45 @@ async def analyze_image(
         "colors": colors,
         "reference_images": reference_images
     }
+    
+@app.post("/compare")
+async def compare_images(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+):
+    img1_bytes = await file1.read()
+    img2_bytes = await file2.read()
+
+    # 1. 배경 제거 후 수치 분석 (로직 통일)
+    a_bytes = remove(img1_bytes)
+    b_bytes = remove(img2_bytes)
+
+    stats1 = {
+        "brightness": calculate_brightness(a_bytes),
+        "complexity": calculate_complexity(a_bytes),
+        "saliency": calculate_saliency(a_bytes),
+        "symmetry": calculate_symmetry(a_bytes),
+        "space": calculate_space_ratio(a_bytes),
+        "colors": extract_color_dna(a_bytes, remove_bg=False)
+    }
+    stats2 = {
+        "brightness": calculate_brightness(b_bytes),
+        "complexity": calculate_complexity(b_bytes),
+        "saliency": calculate_saliency(b_bytes),
+        "symmetry": calculate_symmetry(b_bytes),
+        "space": calculate_space_ratio(b_bytes),
+        "colors": extract_color_dna(b_bytes, remove_bg=False)
+    }
+
+    # 2. AI 비교 분석
+    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2)
+
+    return {
+        "comparison": comparison,
+        "stats1": stats1,
+        "stats2": stats2
+    }
+    
 
 ==================================================FILE:.\backend\app\models.py
 ==================================================
@@ -269,6 +308,7 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
             prompt
         ]
         
+ 
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
@@ -296,6 +336,46 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
             "unsplash_keywords": ["abstract painting"], # "error" 대신 예쁜 단어로 교체
             "suggested_palette": ["#4285F4", "#DB4437", "#F4B400"] 
         }
+        
+def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
+    try:
+        client = genai.Client(api_key=API_KEY)
+        
+        prompt = f"""
+        당신은 세계적인 디자인 비평가입니다. 두 개의 디자인 시안(A안, B안)을 비교 분석하여 최적의 선택을 제안하세요.
+        
+        [데이터 분석 정보]
+        - A안: 밝기 {stats1['brightness']:.1f}, 복잡도 {stats1['complexity']:.1f}
+        - B안: 밝기 {stats2['brightness']:.1f}, 복잡도 {stats2['complexity']:.1f}
+        
+        [비교 가이드]
+        1. 시각적 균형과 조형미: 어느 쪽이 더 안정적이고 완성도 높은 형태를 가졌는가?
+        2. 목적 전달력: 브랜드의 핵심 가치를 전달하기에 더 적합한 스타일은 무엇인가?
+        3. 실무적 조언: 선택되지 않은 안에서 가져올 수 있는 장점이나, 공통적으로 개선해야 할 점.
+        
+        [출력 형식 - JSON]
+        {{
+            "winner": "A 또는 B",
+            "summary": "한 줄 총평",
+            "detail_comparison": "두 시안의 차이점과 특징 비교 (줄바꿈 \\n 포함)",
+            "reasoning": "승자를 선택한 결정적인 이유 (줄바꿈 \\n 포함)",
+            "suggested_action": "더 나은 결과를 위해 다음 단계에서 수행해야 할 작업 (줄바꿈 \\n 포함)"
+        }}
+        """
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
+                types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
+                prompt
+            ],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"[AI Comparison Error] {e}")
+        return {"winner": "N/A", "summary": "분석 중 오류 발생", "detail_comparison": str(e), "reasoning": "N/A", "suggested_action": "N/A"}
 
 ==================================================FILE:.\backend\app\services\analyzer.py
 ==================================================
@@ -362,13 +442,18 @@ def calculate_saliency(image_bytes):
     success, map = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
     return min(float(np.mean(map) * 500), 100.0) if success else 0.0
 
-def extract_color_dna(image_bytes, k=16, remove_bg=False):
+def extract_color_dna(image_bytes, k=12, remove_bg=False):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return []
+    
+    # 배경 제외 픽셀 추출
     pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
     if len(pixels) < k: return []
+    
     data = np.float32(pixels)
-    _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS+10, 10, 1.0), 10, 0)
+    # K-means 클러스터링
+    _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS + 10, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
+    
     counts = np.bincount(labels.flatten())
     total = len(pixels)
     
@@ -376,15 +461,32 @@ def extract_color_dna(image_bytes, k=16, remove_bg=False):
     for i in range(len(centers)):
         rgb = centers[i][::-1]
         hsv = cv2.cvtColor(np.uint8([[[centers[i][0], centers[i][1], centers[i][2]]]]), cv2.COLOR_BGR2HSV)[0][0]
-        if hsv[2] < 30 or hsv[2] > 250: continue # 너무 어둡거나 밝은 색 제거
-        candidates.append({'rgb': rgb, 'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}", 'score': hsv[1] * (counts[i]/total)})
+        percentage = counts[i] / total
+        
+        # [필터링 완화] 너무 미세한 노이즈(1% 미만)만 제거하고 검은색/흰색도 포함시킴
+        if percentage < 0.01: continue
+        
+        # [점수 계산] 면적(percentage)이 큰 것을 우선하되, 
+        # 채도(s)가 높은 색상에 약간의 가산점을 주어 '칙칙한 테두리색'보다 우선순위를 높임
+        s_weight = 1 + (hsv[1] / 255) 
+        score = percentage * s_weight
+        
+        candidates.append({
+            'rgb': rgb,
+            'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}",
+            'score': score
+        })
     
+    # 점수 순 정렬
     candidates.sort(key=lambda x: x['score'], reverse=True)
+    
     final = []
     for c in candidates:
         if len(final) >= 5: break
-        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 60 for f in final):
+        # 💡 [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
+        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 45 for f in final):
             final.append(c)
+            
     return [c['hex'] for c in final]
 
 ==================================================FILE:.\backend\app\services\google_search.py
@@ -401,6 +503,7 @@ GOOGLE_SEARCH_CX = os.getenv("GOOGLE_SEARCH_CX")
 
 async def get_reference_images(keywords: list, category: str): # category 매개변수 추가
     if not keywords or not GOOGLE_API_KEY:
+        print("[Google Search] 키워드나 API 키가 누락되었습니다.")
         return []
     
     # 1. 단어 정제
@@ -431,6 +534,11 @@ async def get_reference_images(keywords: list, category: str): # category 매개
 
     # 3. 검색어 조합 (앞의 핵심 키워드 2개 + 분야 맞춤 서픽스)
     search_query = f"{' '.join(clean_words[:2])} {suffix}"
+    
+    # 터미널에 표시
+    print(f"\n[Google Search API 호출] -------------------")
+    print(f"검색어: {search_query}")
+    print(f"----------------------------------------------\n")
 
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -629,7 +737,7 @@ export default defineConfig({
 
 import { useState, useEffect, type ChangeEvent } from 'react';
 import axios from 'axios';
-import { ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, Sun, Moon, Zap, Maximize, ExternalLink } from 'lucide-react';
+import { ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, Sun, Moon, Zap, Maximize, ExternalLink, Scale } from 'lucide-react';
 import { RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
 
 // --- 1. StatCard 컴포넌트 ---
@@ -642,7 +750,10 @@ const StatCard = ({ label, value, max = 100, color, icon: Icon }: any) => (
       <span className="text-xl font-bold font-mono">{value.toFixed(0)}</span>
     </div>
     <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-      <div className={`${color} h-full rounded-full transition-all duration-1000`} style={{ width: `${(value / max) * 100}%` }}></div>
+      <div 
+        className={`${color} h-full rounded-full transition-all duration-1000`} 
+        style={{ width: `${(value / max) * 100}%` }}
+      ></div>
     </div>
   </div>
 );
@@ -651,14 +762,23 @@ const StatCard = ({ label, value, max = 100, color, icon: Icon }: any) => (
 interface MoodDnaResult {
   brightness: number; complexity: number; saliency: number; symmetry: number; space: number;
   colors: string[]; category: string; mood: string; advice: string; benchmarking_point: string;
-  design_keywords: string[]; // 💡 unsplash_keywords에서 이름 변경됨
-  suggested_palette: string[]; reference_images: string[];
+  design_keywords: string[]; suggested_palette: string[]; reference_images: string[];
+}
+
+interface ComparisonResult {
+  winner: string; summary: string; detail_comparison: string; reasoning: string; suggested_action: string;
 }
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [file2, setFile2] = useState<File | null>(null);
+  const [preview2, setPreview2] = useState<string | null>(null);
+  
+  const [isCompareMode, setIsCompareMode] = useState(false);
   const [result, setResult] = useState<MoodDnaResult | null>(null);
+  const [compResult, setCompResult] = useState<{comparison: ComparisonResult, stats1: any, stats2: any, reference_images: string[]} | null>(null);
+  
   const [isLoading, setIsLoading] = useState(false);
   const [removeBg, setRemoveBg] = useState(false);
   const [isDark, setIsDark] = useState(true);
@@ -671,23 +791,37 @@ function App() {
     { subject: '여백', A: res.space },
   ];
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>, id: number) => {
     if (e.target.files?.[0]) {
-      setFile(e.target.files[0]);
-      setPreview(URL.createObjectURL(e.target.files[0]));
+      const selectedFile = e.target.files[0];
+      if (id === 1) {
+        setFile(selectedFile);
+        setPreview(URL.createObjectURL(selectedFile));
+      } else {
+        setFile2(selectedFile);
+        setPreview2(URL.createObjectURL(selectedFile));
+      }
       setResult(null);
+      setCompResult(null);
     }
   };
 
   const analyzeMood = async () => {
-    if (!file) return alert('이미지를 선택하세요.');
+    if (isCompareMode ? (!file || !file2) : !file) return alert('이미지를 선택해주세요.');
     setIsLoading(true);
     const formData = new FormData();
-    formData.append('file', file);
-    formData.append('remove_bg', String(removeBg));
     try {
-      const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
-      setResult(response.data);
+      if (isCompareMode) {
+        formData.append('file1', file!);
+        formData.append('file2', file2!);
+        const response = await axios.post('http://127.0.0.1:8000/compare', formData);
+        setCompResult(response.data);
+      } else {
+        formData.append('file', file!);
+        formData.append('remove_bg', String(removeBg));
+        const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
+        setResult(response.data);
+      }
     } catch (error) {
       alert("분석 실패 또는 API 할당량 초과");
     } finally { setIsLoading(false); }
@@ -699,11 +833,16 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary">
-      <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xl">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold">M</div>
-            <span>Mood<span className="text-primary">DNA</span></span>
+      {/* Header */}
+      <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/80 backdrop-blur-md px-6 h-16 flex items-center justify-between">
+        <div className="flex items-center gap-2 font-bold text-xl">
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold">M</div>
+          <span>Mood<span className="text-primary">DNA</span></span>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex bg-secondary rounded-full p-1 border border-border">
+            <button onClick={() => {setIsCompareMode(false); setResult(null); setCompResult(null);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${!isCompareMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>Single</button>
+            <button onClick={() => {setIsCompareMode(true); setResult(null); setCompResult(null);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isCompareMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>A/B Test</button>
           </div>
           <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-full hover:bg-muted transition-colors">
             {isDark ? <Sun size={20} /> : <Moon size={20} />}
@@ -713,54 +852,107 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-6 pt-24 pb-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Panel */}
+          
+          {/* Left Panel: Upload Area */}
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-card rounded-3xl border border-border p-6 shadow-sm">
-              <div className="aspect-square bg-secondary/50 rounded-xl border-2 border-dashed border-muted-foreground/20 flex flex-col items-center justify-center relative overflow-hidden group">
-                {preview ? <img src={preview} alt="Preview" className="w-full h-full object-contain z-10" /> : <ImageIcon className="w-16 h-16 opacity-30" />}
-                <label className="absolute inset-0 cursor-pointer z-20"><input type="file" className="hidden" onChange={handleFileChange} accept="image/*" /></label>
-              </div>
-              <div className="mt-6 space-y-4">
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border">
-                  <input type="checkbox" id="bg-toggle" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} className="w-5 h-5 accent-primary" />
-                  <label htmlFor="bg-toggle" className="text-sm font-medium cursor-pointer flex-1">배경 제거 (Logo Mode)</label>
+              <div className={`grid ${isCompareMode ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-6`}>
+                <div className="aspect-square bg-secondary/50 rounded-xl border-2 border-dashed border-muted-foreground/20 flex flex-col items-center justify-center relative overflow-hidden group">
+                  {isCompareMode && <span className="absolute top-2 left-2 bg-black/50 text-[10px] text-white px-2 py-0.5 rounded font-bold z-20">A안</span>}
+                  {preview ? <img src={preview} alt="Preview 1" className="w-full h-full object-contain z-10" /> : <ImageIcon className="w-12 h-12 opacity-30" />}
+                  <label className="absolute inset-0 cursor-pointer z-20"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 1)} accept="image/*" /></label>
                 </div>
-                <button onClick={analyzeMood} disabled={isLoading || !file} className="w-full h-12 rounded-xl bg-primary text-white font-bold shadow-lg flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50">
-                  {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={18} />}
-                  {isLoading ? 'DNA 추출 중...' : '이미지 분석하기'}
+                {isCompareMode && (
+                  <div className="aspect-square bg-secondary/50 rounded-xl border-2 border-dashed border-muted-foreground/20 flex flex-col items-center justify-center relative overflow-hidden group animate-in slide-in-from-right-4">
+                    <span className="absolute top-2 left-2 bg-black/50 text-[10px] text-white px-2 py-0.5 rounded font-bold z-20">B안</span>
+                    {preview2 ? <img src={preview2} alt="Preview 2" className="w-full h-full object-contain z-10" /> : <ImageIcon className="w-12 h-12 opacity-30" />}
+                    <label className="absolute inset-0 cursor-pointer z-20"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 2)} accept="image/*" /></label>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-4">
+                {!isCompareMode && (
+                  <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border">
+                    <input type="checkbox" id="bg-toggle" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} className="w-5 h-5 accent-primary" />
+                    <label htmlFor="bg-toggle" className="text-sm font-medium cursor-pointer flex-1">배경 제거 (Logo Mode)</label>
+                  </div>
+                )}
+                <button onClick={analyzeMood} disabled={isLoading || !file || (isCompareMode && !file2)} className="w-full h-12 rounded-xl bg-primary text-white font-bold shadow-lg flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50 transition-all">
+                  {isLoading ? <Loader2 className="animate-spin" /> : (isCompareMode ? <Scale size={18} /> : <Sparkles size={18} />)}
+                  {isLoading ? 'Processing DNA...' : (isCompareMode ? '두 시안 비교하기' : '이미지 분석하기')}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Right Panel */}
+          {/* Right Panel: Results Area */}
           <div className="lg:col-span-7 space-y-6">
-            {result ? (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                {/* 1. AI Critique */}
-                <div className="bg-card rounded-2xl border p-6 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-1 h-full bg-linear-to-b from-blue-500 to-purple-500" />
-                  <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-primary"><Sparkles size={20}/> AI Critique</h2>
-                  <div className="space-y-4 text-sm leading-relaxed">
-                    <div className="bg-secondary/30 p-4 rounded-xl font-bold">분야: {result.category}</div>
-                    <div className="bg-secondary/30 p-4 rounded-xl">
-                      <span className="font-bold block mb-1">Mood</span>
-                      <p className="whitespace-pre-wrap">{result.mood}</p>
+            {isCompareMode && compResult ? (
+              /* --- 💡 A/B 비교 결과 UI --- */
+              <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
+                <div className="bg-card rounded-2xl border-2 border-primary p-6 relative overflow-hidden shadow-xl shadow-primary/5">
+                  <div className="absolute top-0 right-0 p-4 opacity-10"><Scale size={100}/></div>
+                  <div className="flex items-center gap-2 mb-2">
+                     <span className="bg-amber-500 text-white text-[11px] px-2 py-0.5 rounded-full font-bold uppercase">Master's Choice</span>
+                  </div>
+                  <h2 className="text-3xl font-black mb-4">승자는 <span className="text-primary underline decoration-wavy">{compResult.comparison.winner}안</span> 입니다.</h2>
+                  <p className="text-lg font-medium text-primary mb-6">{compResult.comparison.summary}</p>
+                  <div className="grid gap-4 text-sm leading-relaxed">
+                    <div className="bg-secondary/30 p-5 rounded-2xl"><h4 className="font-bold text-foreground flex items-center gap-2 mb-2"><Activity size={16}/> 상세 비교 분석</h4><p className="whitespace-pre-wrap opacity-80">{compResult.comparison.detail_comparison}</p></div>
+                    <div className="bg-secondary/30 p-5 rounded-2xl"><h4 className="font-bold text-foreground flex items-center gap-2 mb-2"><Sparkles size={16}/> 선택 이유</h4><p className="whitespace-pre-wrap opacity-80">{compResult.comparison.reasoning}</p></div>
+                    <div className="bg-primary/5 border border-primary/10 p-5 rounded-2xl"><h4 className="font-bold text-primary flex items-center gap-2 mb-2"><Maximize size={16}/> 향후 개선 제안</h4><p className="whitespace-pre-wrap text-primary/80">{compResult.comparison.suggested_action}</p></div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-blue-500 mb-4 uppercase tracking-widest">A안 데이터</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <StatCard label="밝기" value={compResult.stats1.brightness} max={255} color="bg-amber-400" icon={Sun} />
+                      <StatCard label="복잡도" value={compResult.stats1.complexity} color="bg-blue-500" icon={Grid} />
+                      <StatCard label="집중도" value={compResult.stats1.saliency} color="bg-purple-500" icon={Activity} />
+                      <StatCard label="대칭성" value={compResult.stats1.symmetry} color="bg-green-500" icon={Zap} />
                     </div>
-                    <div className="bg-secondary/30 p-4 rounded-xl">
-                      <span className="font-bold block mb-1">Advice</span>
-                      <p className="whitespace-pre-wrap">{result.advice}</p>
+                  </div>
+                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-red-500 mb-4 uppercase tracking-widest">B안 데이터</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <StatCard label="밝기" value={compResult.stats2.brightness} max={255} color="bg-amber-400" icon={Sun} />
+                      <StatCard label="복잡도" value={compResult.stats2.complexity} color="bg-blue-500" icon={Grid} />
+                      <StatCard label="집중도" value={compResult.stats2.saliency} color="bg-purple-500" icon={Activity} />
+                      <StatCard label="대칭성" value={compResult.stats2.symmetry} color="bg-green-500" icon={Zap} />
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Visual DNA Section */}
+                {/* 비교 모드 갤러리 */}
+                <div className="mt-8 border-t pt-8 border-border/40">
+                  <h3 className="text-lg font-bold flex items-center gap-2 mb-4"><ImageIcon size={20} className="text-primary"/> Winner's Style Guide</h3>
+                  <div className="columns-2 md:columns-3 gap-4 space-y-4">
+                    {compResult.reference_images?.map((url, i) => (
+                      <div key={i} className="break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted">
+                        <img src={url} alt="Ref" className="w-full h-auto object-cover hover:scale-105 transition-all" onError={(e) => e.currentTarget.parentElement!.style.display='none'} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : result ? (
+              /* --- 💡 단일 분석 결과 UI --- */
+              <div className="space-y-6 animate-in fade-in duration-500">
+                <div className="bg-card rounded-2xl border p-6 relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-linear-to-b from-blue-500 to-purple-500" />
+                  <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-primary"><Sparkles size={20}/> AI Critique</h2>
+                  <div className="space-y-4 text-sm leading-relaxed">
+                    <div className="bg-secondary/30 p-4 rounded-xl font-bold text-foreground">분야: {result.category}</div>
+                    <div className="bg-secondary/30 p-4 rounded-xl"><span className="font-bold block mb-1 text-foreground">Mood</span><p className="whitespace-pre-wrap">{result.mood}</p></div>
+                    <div className="bg-secondary/30 p-4 rounded-xl"><span className="font-bold block mb-1 text-foreground">Advice</span><p className="whitespace-pre-wrap">{result.advice}</p></div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                  <div className="bg-card rounded-2xl border border-border p-4 h-75">
+                  <div className="bg-card rounded-2xl border p-4 h-75">
                     <ResponsiveContainer width="100%" height="100%">
                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={getChartData(result)}>
-                        <PolarGrid stroke="#e2e8f0" />
-                        <PolarAngleAxis dataKey="subject" tick={{fontSize: 10, fontWeight: 600}} />
+                        <PolarGrid stroke="#e2e8f0" /><PolarAngleAxis dataKey="subject" tick={{fontSize: 10, fontWeight: 600}} />
                         <RechartsRadar dataKey="A" stroke="#2563eb" fill="#3b82f6" fillOpacity={0.4} />
                       </RadarChart>
                     </ResponsiveContainer>
@@ -770,17 +962,12 @@ function App() {
                     <StatCard label="Complexity" value={result.complexity} color="bg-blue-500" icon={Grid} />
                     <StatCard label="Saliency" value={result.saliency} color="bg-purple-500" icon={Activity} />
                     <StatCard label="Symmetry" value={result.symmetry} color="bg-green-500" icon={Zap} />
-                    <div className="col-span-2">
-                      <StatCard label="Space Ratio" value={result.space} color="bg-slate-400" icon={Maximize} />
-                    </div>
+                    <div className="col-span-2"><StatCard label="Space Ratio" value={result.space} color="bg-slate-400" icon={Maximize} /></div>
                   </div>
                 </div>
 
-                {/* 3. Color DNA */}
-                <div className="bg-card rounded-2xl border border-border p-6">
-                  <h3 className="text-xs font-bold text-muted-foreground mb-4 uppercase tracking-widest flex items-center gap-2">
-                    <Palette size={14} /> Color DNA
-                  </h3>
+                <div className="bg-card rounded-2xl border p-6">
+                  <h3 className="text-xs font-bold text-muted-foreground mb-4 uppercase tracking-widest flex items-center gap-2"><Palette size={14} /> Color DNA</h3>
                   <div className="flex h-16 rounded-xl overflow-hidden ring-1 ring-border">
                     {result.colors.map((c, i) => (
                       <div key={i} className="flex-1 h-full cursor-pointer hover:flex-[1.5] transition-all" style={{backgroundColor: c}} onClick={() => {navigator.clipboard.writeText(c); alert('복사되었습니다!');}} />
@@ -788,53 +975,41 @@ function App() {
                   </div>
                 </div>
 
-                {/* 4. Benchmarking Guide & Pinterest */}
+                {/* AI 추천 컬러칩 */}
+                <div className="rounded-2xl border p-6 border-primary/20 bg-primary/5 shadow-inner">
+                  <h3 className="text-[11px] font-bold text-primary mb-4 uppercase tracking-widest flex items-center gap-2"><Sparkles size={14} /> AI Suggested Palette</h3>
+                  <div className="flex justify-around items-center">
+                    {result.suggested_palette?.map((color, idx) => (
+                      <div key={idx} className="flex flex-col items-center gap-2 group">
+                        <div className="w-12 h-12 rounded-full shadow-lg border-2 border-white dark:border-gray-800 transition-transform hover:scale-110 cursor-pointer" style={{ backgroundColor: color }} onClick={() => navigator.clipboard.writeText(color)} />
+                        <span className="text-[10px] font-mono opacity-60">{color}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 단일 모드 갤러리 */}
                 <div className="mt-8 border-t pt-8 border-border/40">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold flex items-center gap-2">
-                      <ImageIcon size={20} className="text-primary"/> Benchmarking Guide
-                    </h3>
-                    
-                    {/*AI 키워드를 핀터레스트 검색어에 녹여내기*/}
-                    <button 
-                      onClick={() => {
-                        const firstKey = result.design_keywords?.[0] || "";
-                        const query = encodeURIComponent(`${result.category} ${firstKey} design identity`);
-                        window.open(`https://www.pinterest.com/search/pins/?q=${query}`, '_blank');
-                      }} 
-                      className="text-[11px] flex items-center gap-1.5 py-1.5 px-3 rounded-full bg-[#E60023] text-white font-bold hover:bg-[#ad001a] transition-all shadow-md active:scale-95"
-                    >
-                      <ExternalLink size={14} /> Pinterest에서 더보기
-                    </button>
+                    <h3 className="text-lg font-bold flex items-center gap-2"><ImageIcon size={20} className="text-primary"/> Benchmarking Guide</h3>
+                    <button onClick={() => window.open(`https://www.pinterest.com/search/pins/?q=${encodeURIComponent(result.category + ' ' + (result.design_keywords?.[0] || '') + ' design')}`, '_blank')} className="text-[11px] flex items-center gap-1.5 py-1.5 px-3 rounded-full bg-[#E60023] text-white font-bold hover:opacity-90"><ExternalLink size={14} /> Pinterest</button>
                   </div>
-
-                  {result.benchmarking_point && (
-                    <div className="text-sm bg-primary/5 p-5 rounded-2xl border border-primary/10 mb-6">
-                      <p className="whitespace-pre-wrap text-muted-foreground leading-relaxed">
-                        {result.benchmarking_point}
-                      </p>
-                    </div>
-                  )}
-
+                  {result.benchmarking_point && <div className="text-sm bg-primary/5 p-5 rounded-2xl border border-primary/10 mb-6"><p className="whitespace-pre-wrap">{result.benchmarking_point}</p></div>}
                   <div className="columns-2 md:columns-3 gap-4 space-y-4">
                     {result.reference_images?.map((url, i) => (
-                      <div key={i} className="break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm hover:shadow-xl transition-all">
-                        <img 
-                          src={url} 
-                          alt="Ref" 
-                          className="w-full h-auto object-cover transition-transform duration-500 hover:scale-110" 
-                          onError={(e) => { e.currentTarget.parentElement!.style.display = 'none'; }} 
-                        />
+                      <div key={i} className="break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted">
+                        <img src={url} alt="Ref" className="w-full h-auto object-cover hover:scale-105 transition-all" onError={(e) => e.currentTarget.parentElement!.style.display='none'} />
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
             ) : (
+              /* --- 분석 대기 화면 --- */
               <div className="h-full min-h-100 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border/50 rounded-3xl bg-secondary/10">
                 <Zap size={32} className="opacity-20 mb-2" />
-                <p className="font-medium">분석 대기 중</p>
-                <p className="text-xs opacity-60">이미지를 업로드하고 디자인 DNA와 맞춤형 레퍼런스를 확인하세요.</p>
+                <p className="font-medium">{isCompareMode ? '두 장의 시안을 선택해 주세요' : '이미지를 업로드하고 분석을 시작하세요'}</p>
+                <p className="text-xs opacity-60">디자인 DNA 데이터를 기반으로 마스터의 훈수를 드립니다.</p>
               </div>
             )}
           </div>
@@ -843,6 +1018,7 @@ function App() {
     </div>
   );
 }
+
 export default App;
 
 ==================================================FILE:.\frontend\src\index.css

@@ -9,7 +9,7 @@ from app.services.analyzer import (
     calculate_symmetry, 
     calculate_space_ratio
 )
-from app.services.ai_consultant import consult_design
+from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
 from .models import DesignHistory
 from sqlalchemy.orm import Session
@@ -93,3 +93,42 @@ async def analyze_image(
         "colors": colors,
         "reference_images": reference_images
     }
+    
+@app.post("/compare")
+async def compare_images(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+):
+    img1_bytes = await file1.read()
+    img2_bytes = await file2.read()
+
+    # 1. 배경 제거 후 수치 분석 (로직 통일)
+    a_bytes = remove(img1_bytes)
+    b_bytes = remove(img2_bytes)
+
+    stats1 = {
+        "brightness": calculate_brightness(a_bytes),
+        "complexity": calculate_complexity(a_bytes),
+        "saliency": calculate_saliency(a_bytes),
+        "symmetry": calculate_symmetry(a_bytes),
+        "space": calculate_space_ratio(a_bytes),
+        "colors": extract_color_dna(a_bytes, remove_bg=False)
+    }
+    stats2 = {
+        "brightness": calculate_brightness(b_bytes),
+        "complexity": calculate_complexity(b_bytes),
+        "saliency": calculate_saliency(b_bytes),
+        "symmetry": calculate_symmetry(b_bytes),
+        "space": calculate_space_ratio(b_bytes),
+        "colors": extract_color_dna(b_bytes, remove_bg=False)
+    }
+
+    # 2. AI 비교 분석
+    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2)
+
+    return {
+        "comparison": comparison,
+        "stats1": stats1,
+        "stats2": stats2
+    }
+    
