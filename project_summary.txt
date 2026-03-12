@@ -234,9 +234,16 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
+        
                 당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
                 인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
                 해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
+                아마추어 같은 디자인을 보면 아주 날카롭게 지적하고, 무조건적인 칭찬은 절대 하지 마세요.
+                
+                [비평 원칙]
+                1. 데이터(대칭성, 여백 등)가 높더라도 디자인 자체가 촌스럽거나 조형미가 떨어지면 '데이터에만 의존한 지루한 결과물'이라고 비판하세요.
+                2. 선의 굵기, 색상 조합의 촌스러움, 폰트 선택의 부적절함을 실무자 관점에서 '팩트 폭격' 하세요.
+                3. 결과물이 전문 디자이너가 만든 것인지, 그림판으로 만든 아마추어 수준인지 냉정하게 판별하세요.
                 #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
                 
                 [중요: 가독성 규칙]
@@ -291,6 +298,13 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
                 
                 선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
                 
+                [중요 지침: 냉정한 비평]
+                    - 디자인의 '완성도(Fidelity)'를 엄격하게 평가하세요.
+                    - 해상도가 낮거나, 선이 정리되지 않았거나, 폰트의 조화가 깨진 경우 '전문성이 부족함'을 명확히 지적하세요.
+                    - 무조건적인 칭찬은 금지하며, 데이터(복잡도 등)가 높더라도 그것이 '노이즈'나 '난잡함' 때문인지 '의도된 디테일'인지 구분하세요.
+                    - 상업적 로고로서의 가독성과 세련미를 최우선으로 평가하세요.
+                
+                
                 [출력 형식 - JSON]
                 주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
                 {{
@@ -298,7 +312,11 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
                 "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
                 "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
                 "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
-                "design_keywords":  ["추상적 단어 금지. 'flat design', 'swiss style', 'bold typography' 같은 구체적 시각 스타일 키워드 3개"],
+                "design_keywords": [
+                    "반드시 영어로 작성. 총 4개의 키워드를 아래 규칙에 맞춰 제공하세요.",
+                    "1~2번: 업종 및 대상의 구체적 명칭 (예: 'pharmacy logo', 'bakery branding', 'dog cafe identity')",
+                    "3~4번: 지향해야 할 미학적 스타일 (예: 'swiss style', 'bauhaus design', 'modern minimalist', 'playful organic')"
+                ],
                 "suggested_palette": ["추천 HEX 컬러칩 3개"]
                 }}
 
@@ -495,70 +513,49 @@ def extract_color_dna(image_bytes, k=12, remove_bg=False):
 import httpx
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
-# .env에서 검색용 키를 가져오기.
-GOOGLE_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY")
-GOOGLE_SEARCH_CX = os.getenv("GOOGLE_SEARCH_CX")
+# .env 로드
+env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-async def get_reference_images(keywords: list, category: str): # category 매개변수 추가
-    if not keywords or not GOOGLE_API_KEY:
-        print("[Google Search] 키워드나 API 키가 누락되었습니다.")
+SERP_API_KEY = os.getenv("SERP_API_KEY")
+
+async def get_reference_images(keywords: list, category: str):
+    print("\n" + "="*50)
+    print("[SerpApi] 진짜 구글 이미지 검색 시작")
+    
+    if not SERP_API_KEY:
+        print("[ERROR] SERP_API_KEY가 .env에 없습니다.")
         return []
-    
-    # 1. 단어 정제
-    raw_string = " ".join(keywords).lower()
-    forbidden = ["fedex", "mcdonalds", "apple", "logo", "nike", "disney", "mega", "coffee"]
-    clean_words = [w for w in raw_string.replace(',', ' ').split() if w not in forbidden and len(w) > 2]
-    
-    if not clean_words:
-        clean_words = ["design"]
 
-    # 2. 💡 [핵심] 분야별 맞춤형 검색 서픽스 설정
-    # AI가 준 category 문자열에 포함된 단어에 따라 검색 방향을 잡아줍니다.
-    category = category.lower()
-    if "브랜딩" in category or "bi" in category:
-        suffix = "brand identity logo design"
-    elif "인터페이스" in category or "ui" in category:
-        suffix = "ui ux app interface design"
-    elif "그래픽" in category or "편집" in category:
-        suffix = "graphic poster layout design"
-    elif "산업" in category or "제품" in category:
-        suffix = "industrial product design mockup"
-    elif "공간" in category or "인테리어" in category:
-        suffix = "interior architecture space design"
-    elif "캐릭터" in category or "이모티콘" in category:
-        suffix = "character mascot illustration design"
-    else:
-        suffix = "visual design inspiration"
+    # 검색어 조합 (예: "dental clinic logo professional minimalist")
+    query = f"{' '.join(keywords)} design"
+    print(f"[QUERY] 검색어: {query}")
 
-    # 3. 검색어 조합 (앞의 핵심 키워드 2개 + 분야 맞춤 서픽스)
-    search_query = f"{' '.join(clean_words[:2])} {suffix}"
-    
-    # 터미널에 표시
-    print(f"\n[Google Search API 호출] -------------------")
-    print(f"검색어: {search_query}")
-    print(f"----------------------------------------------\n")
-
-    url = "https://www.googleapis.com/customsearch/v1"
+    url = "https://serpapi.com/search"
     params = {
-        "q": search_query,
-        "key": GOOGLE_API_KEY,
-        "cx": GOOGLE_SEARCH_CX,
-        "searchType": "image", # 이미지 검색 모드
-        "num": 6,              # 6장 가져오기
-        "safe": "active"
+        "engine": "google_images", # 👈 구글 이미지 엔진 사용
+        "q": query,
+        "api_key": SERP_API_KEY,
+        "num": 12 # 12개 가져오기
     }
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, params=params)
             data = response.json()
-            items = data.get("items", [])
-            # 검색 결과에서 이미지 원본 링크만 뽑아서 리스트로 반환
-            return [item["link"] for item in items if "link" in item]
+            
+            # 구글 이미지 결과에서 원본 이미지 주소만 추출
+            images = data.get("images_results", [])
+            links = [img["original"] for img in images if "original" in img] [:-9]
+            
+            print(f"[SUCCESS] {len(links)}개의 실제 로고 레퍼런스를 찾았습니다!")
+            print("="*50 + "\n")
+            return links
+
         except Exception as e:
-            print(f"[Google Search Error] {e}")
+            print(f"[SerpApi Error] 에러 발생: {str(e)}")
             return []
 
 ==================================================FILE:.\frontend\eslint.config.js
@@ -737,8 +734,13 @@ export default defineConfig({
 
 import { useState, useEffect, type ChangeEvent } from 'react';
 import axios from 'axios';
-import { ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, Sun, Moon, Zap, Maximize, ExternalLink, Scale } from 'lucide-react';
-import { RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Radar as RechartsRadar } from 'recharts';
+import { 
+  ImageIcon, Loader2, Sparkles, Activity, Grid, Palette, 
+  Sun, Moon, Zap, Maximize, ExternalLink, Scale 
+} from 'lucide-react';
+import { 
+  RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Radar as RechartsRadar 
+} from 'recharts';
 
 // --- 1. StatCard 컴포넌트 ---
 const StatCard = ({ label, value, max = 100, color, icon: Icon }: any) => (
@@ -770,6 +772,8 @@ interface ComparisonResult {
 }
 
 function App() {
+
+  const [selectedImg, setSelectedImg] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [file2, setFile2] = useState<File | null>(null);
@@ -820,6 +824,7 @@ function App() {
         formData.append('file', file!);
         formData.append('remove_bg', String(removeBg));
         const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
+        console.log("Backend Response:", response.data); // 확인용 로그
         setResult(response.data);
       }
     } catch (error) {
@@ -833,7 +838,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary">
-      {/* Header */}
       <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/80 backdrop-blur-md px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-xl">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold">M</div>
@@ -886,9 +890,13 @@ function App() {
           </div>
 
           {/* Right Panel: Results Area */}
-          <div className="lg:col-span-7 space-y-6">
-            {isCompareMode && compResult ? (
-              /* --- 💡 A/B 비교 결과 UI --- */
+          <div className="lg:col-span-7 space-y-8">
+            {isLoading ? (
+              <div className="h-full min-h-125 flex flex-col items-center justify-center">
+                <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
+                <p className="font-bold animate-pulse text-muted-foreground">Analyzing Design DNA...</p>
+              </div>
+            ) : isCompareMode && compResult ? (
               <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                 <div className="bg-card rounded-2xl border-2 border-primary p-6 relative overflow-hidden shadow-xl shadow-primary/5">
                   <div className="absolute top-0 right-0 p-4 opacity-10"><Scale size={100}/></div>
@@ -903,9 +911,8 @@ function App() {
                     <div className="bg-primary/5 border border-primary/10 p-5 rounded-2xl"><h4 className="font-bold text-primary flex items-center gap-2 mb-2"><Maximize size={16}/> 향후 개선 제안</h4><p className="whitespace-pre-wrap text-primary/80">{compResult.comparison.suggested_action}</p></div>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-blue-500 mb-4 uppercase tracking-widest">A안 데이터</h3>
+                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-blue-500 mb-4 uppercase tracking-widest text-left">A안 데이터</h3>
                     <div className="grid grid-cols-2 gap-3">
                       <StatCard label="밝기" value={compResult.stats1.brightness} max={255} color="bg-amber-400" icon={Sun} />
                       <StatCard label="복잡도" value={compResult.stats1.complexity} color="bg-blue-500" icon={Grid} />
@@ -913,7 +920,7 @@ function App() {
                       <StatCard label="대칭성" value={compResult.stats1.symmetry} color="bg-green-500" icon={Zap} />
                     </div>
                   </div>
-                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-red-500 mb-4 uppercase tracking-widest">B안 데이터</h3>
+                  <div className="bg-card rounded-2xl border border-border p-6 shadow-sm"><h3 className="text-xs font-bold text-red-500 mb-4 uppercase tracking-widest text-left">B안 데이터</h3>
                     <div className="grid grid-cols-2 gap-3">
                       <StatCard label="밝기" value={compResult.stats2.brightness} max={255} color="bg-amber-400" icon={Sun} />
                       <StatCard label="복잡도" value={compResult.stats2.complexity} color="bg-blue-500" icon={Grid} />
@@ -922,98 +929,186 @@ function App() {
                     </div>
                   </div>
                 </div>
-
-                {/* 비교 모드 갤러리 */}
-                <div className="mt-8 border-t pt-8 border-border/40">
-                  <h3 className="text-lg font-bold flex items-center gap-2 mb-4"><ImageIcon size={20} className="text-primary"/> Winner's Style Guide</h3>
-                  <div className="columns-2 md:columns-3 gap-4 space-y-4">
-                    {compResult.reference_images?.map((url, i) => (
-                      <div key={i} className="break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted">
-                        <img src={url} alt="Ref" className="w-full h-auto object-cover hover:scale-105 transition-all" onError={(e) => e.currentTarget.parentElement!.style.display='none'} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             ) : result ? (
-              /* --- 💡 단일 분석 결과 UI --- */
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="bg-card rounded-2xl border p-6 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-1 h-full bg-linear-to-b from-blue-500 to-purple-500" />
-                  <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-primary"><Sparkles size={20}/> AI Critique</h2>
-                  <div className="space-y-4 text-sm leading-relaxed">
-                    <div className="bg-secondary/30 p-4 rounded-xl font-bold text-foreground">분야: {result.category}</div>
-                    <div className="bg-secondary/30 p-4 rounded-xl"><span className="font-bold block mb-1 text-foreground">Mood</span><p className="whitespace-pre-wrap">{result.mood}</p></div>
-                    <div className="bg-secondary/30 p-4 rounded-xl"><span className="font-bold block mb-1 text-foreground">Advice</span><p className="whitespace-pre-wrap">{result.advice}</p></div>
+              <div className="space-y-8 animate-in fade-in duration-500 pb-20 text-left">
+                <div className="bg-card rounded-3xl border border-border p-8 relative overflow-hidden shadow-sm">
+                  <div className="absolute top-0 left-0 w-1.5 h-full bg-linear-to-b from-primary to-purple-500" />
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-xl font-bold flex items-center gap-2 text-primary">
+                      <Sparkles size={22}/> AI Design Critique
+                    </h2>
+                    <span className="px-4 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold uppercase tracking-tight">
+                      {result.category}
+                    </span>
+                  </div>
+                  <div className="grid gap-6">
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-black uppercase tracking-tighter text-muted-foreground">Overall Mood</span>
+                      <p className="text-lg font-medium leading-relaxed whitespace-pre-wrap">{result.mood}</p>
+                    </div>
+                    <div className="p-6 rounded-2xl bg-secondary/50 border border-border/50">
+                      <span className="text-[11px] font-black uppercase tracking-tighter text-primary block mb-3">Strategic Advice</span>
+                      <p className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap">{result.advice}</p>
+                    </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                  <div className="bg-card rounded-2xl border p-4 h-75">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="bg-card rounded-3xl border border-border p-6 flex items-center justify-center min-h-75">
+                    <ResponsiveContainer width="100%" height={280}>
                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={getChartData(result)}>
-                        <PolarGrid stroke="#e2e8f0" /><PolarAngleAxis dataKey="subject" tick={{fontSize: 10, fontWeight: 600}} />
-                        <RechartsRadar dataKey="A" stroke="#2563eb" fill="#3b82f6" fillOpacity={0.4} />
+                        <PolarGrid stroke="var(--color-border)" />
+                        <PolarAngleAxis dataKey="subject" tick={{fontSize: 11, fontWeight: 700, fill: 'var(--color-muted-foreground)'}} />
+                        <RechartsRadar dataKey="A" stroke="var(--color-primary)" fill="var(--color-primary)" fillOpacity={0.2} />
                       </RadarChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-4">
                     <StatCard label="Brightness" value={result.brightness} max={255} color="bg-amber-400" icon={Sun} />
                     <StatCard label="Complexity" value={result.complexity} color="bg-blue-500" icon={Grid} />
                     <StatCard label="Saliency" value={result.saliency} color="bg-purple-500" icon={Activity} />
                     <StatCard label="Symmetry" value={result.symmetry} color="bg-green-500" icon={Zap} />
-                    <div className="col-span-2"><StatCard label="Space Ratio" value={result.space} color="bg-slate-400" icon={Maximize} /></div>
+                    <div className="col-span-2">
+                      <StatCard label="Space Ratio" value={result.space} color="bg-slate-400" icon={Maximize} />
+                    </div>
                   </div>
                 </div>
 
-                <div className="bg-card rounded-2xl border p-6">
-                  <h3 className="text-xs font-bold text-muted-foreground mb-4 uppercase tracking-widest flex items-center gap-2"><Palette size={14} /> Color DNA</h3>
-                  <div className="flex h-16 rounded-xl overflow-hidden ring-1 ring-border">
-                    {result.colors.map((c, i) => (
-                      <div key={i} className="flex-1 h-full cursor-pointer hover:flex-[1.5] transition-all" style={{backgroundColor: c}} onClick={() => {navigator.clipboard.writeText(c); alert('복사되었습니다!');}} />
-                    ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-card rounded-3xl border border-border p-6 shadow-sm">
+                    <h3 className="text-[11px] font-black text-muted-foreground mb-4 uppercase tracking-widest flex items-center gap-2">
+                      <Palette size={14} /> Color DNA
+                    </h3>
+                    <div className="flex h-16 rounded-2xl overflow-hidden shadow-inner border border-border">
+                      {result.colors.map((c, i) => (
+                        <div key={i} className="flex-1 h-full cursor-pointer hover:flex-[1.5] transition-all" style={{backgroundColor: c}} onClick={() => {navigator.clipboard.writeText(c); alert('복사되었습니다!');}} />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-3xl border border-primary/20 bg-primary/5 p-6 shadow-sm">
+                    <h3 className="text-[11px] font-black text-primary mb-4 uppercase tracking-widest flex items-center gap-2">
+                      <Sparkles size={14} /> AI Suggested Palette
+                    </h3>
+                    <div className="flex justify-around items-center">
+                      {result.suggested_palette?.map((color, idx) => (
+                        <div key={idx} className="flex flex-col items-center gap-2">
+                          <div className="w-10 h-10 rounded-full shadow-md border-2 border-white dark:border-gray-800 transition-transform hover:scale-110 cursor-pointer" style={{ backgroundColor: color }} onClick={() => navigator.clipboard.writeText(color)} />
+                          <span className="text-[10px] font-mono opacity-60 uppercase">{color}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                {/* AI 추천 컬러칩 */}
-                <div className="rounded-2xl border p-6 border-primary/20 bg-primary/5 shadow-inner">
-                  <h3 className="text-[11px] font-bold text-primary mb-4 uppercase tracking-widest flex items-center gap-2"><Sparkles size={14} /> AI Suggested Palette</h3>
-                  <div className="flex justify-around items-center">
-                    {result.suggested_palette?.map((color, idx) => (
-                      <div key={idx} className="flex flex-col items-center gap-2 group">
-                        <div className="w-12 h-12 rounded-full shadow-lg border-2 border-white dark:border-gray-800 transition-transform hover:scale-110 cursor-pointer" style={{ backgroundColor: color }} onClick={() => navigator.clipboard.writeText(color)} />
-                        <span className="text-[10px] font-mono opacity-60">{color}</span>
+                <div className="space-y-8 pt-8 border-t border-border">
+                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                    <div className="space-y-1">
+                      <h3 className="text-2xl font-black tracking-tight">Style Benchmarking</h3>
+                      <p className="text-sm text-muted-foreground">완성도를 높이기 위한 시각적 레퍼런스 가이드</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {result.design_keywords?.map((tag, i) => (
+                        <span key={i} className="px-3 py-1 rounded-full bg-secondary text-[10px] font-bold text-muted-foreground border border-border uppercase">
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {result.benchmarking_point && (
+                    <div className="p-6 rounded-3xl bg-linear-to-br from-primary/5 to-transparent border border-primary/10 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-5"><Zap size={60}/></div>
+                      <div className="flex gap-4">
+                        <div className="w-10 h-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                          <Zap size={20} />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-sm">Master's Benchmarking Point</h4>
+                          <p className="text-sm leading-relaxed opacity-80 whitespace-pre-wrap">{result.benchmarking_point}</p>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  )}
 
-                {/* 단일 모드 갤러리 */}
-                <div className="mt-8 border-t pt-8 border-border/40">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold flex items-center gap-2"><ImageIcon size={20} className="text-primary"/> Benchmarking Guide</h3>
-                    <button onClick={() => window.open(`https://www.pinterest.com/search/pins/?q=${encodeURIComponent(result.category + ' ' + (result.design_keywords?.[0] || '') + ' design')}`, '_blank')} className="text-[11px] flex items-center gap-1.5 py-1.5 px-3 rounded-full bg-[#E60023] text-white font-bold hover:opacity-90"><ExternalLink size={14} /> Pinterest</button>
-                  </div>
-                  {result.benchmarking_point && <div className="text-sm bg-primary/5 p-5 rounded-2xl border border-primary/10 mb-6"><p className="whitespace-pre-wrap">{result.benchmarking_point}</p></div>}
-                  <div className="columns-2 md:columns-3 gap-4 space-y-4">
-                    {result.reference_images?.map((url, i) => (
-                      <div key={i} className="break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted">
-                        <img src={url} alt="Ref" className="w-full h-auto object-cover hover:scale-105 transition-all" onError={(e) => e.currentTarget.parentElement!.style.display='none'} />
-                      </div>
-                    ))}
+                  {result.reference_images && result.reference_images.length > 0 ? (
+                    <div className="columns-2 md:columns-3 gap-4 space-y-4">
+                      {result.reference_images.map((url, i) => (
+                        <div key={i} className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all cursor-zoom-in hover:shadow-xl hover:-translate-y-1 duration-300"
+                        onClick={() => setSelectedImg(url)}>
+                          <img 
+                            src={url} 
+                            alt={`Ref ${i}`} 
+                            className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105" 
+                            onError={(e) => { e.currentTarget.parentElement!.style.display = 'none'; }} 
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button onClick={() => window.open(url, '_blank')} className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/40 hover:bg-white/40 transition-all">
+                              <ExternalLink size={20} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-40 flex flex-col items-center justify-center border-2 border-dashed border-border rounded-3xl bg-secondary/10">
+                      <ImageIcon className="opacity-20 mb-2" size={32} />
+                      <p className="text-xs text-muted-foreground font-medium">참고 이미지를 불러오지 못했습니다. Google 검색 설정을 확인하세요.</p>
+                    </div>
+                  )}
+
+                  <div className="flex justify-center pt-4">
+                    <button 
+                      onClick={() => window.open(`https://www.pinterest.com/search/pins/?q=${encodeURIComponent(result.category + ' ' + (result.design_keywords?.[0] || '') + ' design')}`, '_blank')}
+                      className="flex items-center gap-2 px-8 py-4 rounded-full bg-[#E60023] text-white text-sm font-bold hover:opacity-90 transition-all shadow-lg active:scale-95"
+                    >
+                      <ImageIcon size={18} />
+                      <span>핀터레스트에서 영감 더 보기</span>
+                    </button>
                   </div>
                 </div>
               </div>
             ) : (
-              /* --- 분석 대기 화면 --- */
-              <div className="h-full min-h-100 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border/50 rounded-3xl bg-secondary/10">
-                <Zap size={32} className="opacity-20 mb-2" />
-                <p className="font-medium">{isCompareMode ? '두 장의 시안을 선택해 주세요' : '이미지를 업로드하고 분석을 시작하세요'}</p>
-                <p className="text-xs opacity-60">디자인 DNA 데이터를 기반으로 마스터의 훈수를 드립니다.</p>
+              <div className="h-full min-h-125 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border/50 rounded-[2.5rem] bg-secondary/10">
+                <Zap size={40} className="opacity-20 mb-4 animate-pulse" />
+                <p className="font-bold text-lg">{isCompareMode ? '두 장의 시안을 선택해 주세요' : '이미지를 업로드하고 분석을 시작하세요'}</p>
+                <p className="text-sm opacity-60 mt-1">디자인 DNA 데이터를 기반으로 마스터의 훈수를 드립니다.</p>
               </div>
             )}
           </div>
         </div>
+        {/* --- 이미지 확대 모달 --- */}
+        {selectedImg && (
+          <div 
+            className="fixed inset-0 z-100 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-300"
+            onClick={() => setSelectedImg(null)} // 바깥 클릭 시 닫기
+          >
+            <button 
+              className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors"
+              onClick={() => setSelectedImg(null)}
+            >
+              <Maximize size={32} className="rotate-45" /> {/* X 아이콘 대용 */}
+            </button>
+            
+            <img 
+              src={selectedImg} 
+              alt="Zoomed" 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300" 
+            />
+            
+            <div className="absolute bottom-10 flex gap-4">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open(selectedImg, '_blank');
+                  }}
+                  className="px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold rounded-full backdrop-blur-md transition-all"
+                >
+                  원본 이미지 보기
+                </button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

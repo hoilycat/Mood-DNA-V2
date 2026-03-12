@@ -3,6 +3,8 @@ from google.genai import types
 import os
 from dotenv import load_dotenv
 import json
+import cv2
+import numpy as np
 
 # 파일 경로 고정
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,15 +20,44 @@ else:
     print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
 
 
-def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space, colors):
+def resize_image_bytes(image_bytes, max_size=1024):
+    try:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            return image_bytes # 디코딩 실패 시 원본 반환
+            
+        h, w = img.shape[:2]
+        if max(h, w) > max_size:
+            scale = max_size / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+        _, encoded_img = cv2.imencode('.jpeg', img)
+        return encoded_img.tobytes()
+    except Exception as e:
+        print(f"[Resize Error] {e}")
+        return image_bytes
+
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors):
+
+    image_bytes = resize_image_bytes(image_bytes)
 
     try:
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
+        
                 당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
                 인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
                 해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
+                아마추어 같은 디자인을 보면 아주 날카롭게 지적하고, 무조건적인 칭찬은 절대 하지 마세요.
+                
+                [비평 원칙]
+                1. 데이터(대칭성, 여백 등)가 높더라도 디자인 자체가 촌스럽거나 조형미가 떨어지면 '데이터에만 의존한 지루한 결과물'이라고 비판하세요.
+                2. 선의 굵기, 색상 조합의 촌스러움, 폰트 선택의 부적절함을 실무자 관점에서 '팩트 폭격' 하세요.
+                3. 결과물이 전문 디자이너가 만든 것인지, 그림판으로 만든 아마추어 수준인지 냉정하게 판별하세요.
                 #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
                 
                 [중요: 가독성 규칙]
@@ -81,6 +112,13 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
                 
                 선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
                 
+                [중요 지침: 냉정한 비평]
+                    - 디자인의 '완성도(Fidelity)'를 엄격하게 평가하세요.
+                    - 해상도가 낮거나, 선이 정리되지 않았거나, 폰트의 조화가 깨진 경우 '전문성이 부족함'을 명확히 지적하세요.
+                    - 무조건적인 칭찬은 금지하며, 데이터(복잡도 등)가 높더라도 그것이 '노이즈'나 '난잡함' 때문인지 '의도된 디테일'인지 구분하세요.
+                    - 상업적 로고로서의 가독성과 세련미를 최우선으로 평가하세요.
+                
+                
                 [출력 형식 - JSON]
                 주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
                 {{
@@ -88,7 +126,11 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
                 "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
                 "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
                 "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
-                "design_keywords":  ["추상적 단어 금지. 'flat design', 'swiss style', 'bold typography' 같은 구체적 시각 스타일 키워드 3개"],
+                "design_keywords": [
+                    "반드시 영어로 작성. 총 4개의 키워드를 아래 규칙에 맞춰 제공하세요.",
+                    "1~2번: 업종 및 대상의 구체적 명칭 (예: 'pharmacy logo', 'bakery branding', 'dog cafe identity')",
+                    "3~4번: 지향해야 할 미학적 스타일 (예: 'swiss style', 'bauhaus design', 'modern minimalist', 'playful organic')"
+                ],
                 "suggested_palette": ["추천 HEX 컬러칩 3개"]
                 }}
 
@@ -100,7 +142,7 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
         
  
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 prompt
@@ -154,7 +196,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
         """
         
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[
                 types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
                 types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),

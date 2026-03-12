@@ -38,6 +38,8 @@ interface ComparisonResult {
 }
 
 function App() {
+
+  const [selectedImg, setSelectedImg] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [file2, setFile2] = useState<File | null>(null);
@@ -298,10 +300,12 @@ function App() {
                   {result.reference_images && result.reference_images.length > 0 ? (
                     <div className="columns-2 md:columns-3 gap-4 space-y-4">
                       {result.reference_images.map((url, i) => (
-                        <div key={i} className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 duration-300">
+                        <div key={i} className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all cursor-zoom-in hover:shadow-xl hover:-translate-y-1 duration-300"
+                        onClick={() => setSelectedImg(url)}>
                           <img 
                             src={url} 
                             alt={`Ref ${i}`} 
+                            referrerPolicy="no-referrer"
                             className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105" 
                             onError={(e) => { e.currentTarget.parentElement!.style.display = 'none'; }} 
                           />
@@ -340,6 +344,38 @@ function App() {
             )}
           </div>
         </div>
+        {/* --- 이미지 확대 모달 --- */}
+        {selectedImg && (
+          <div 
+            className="fixed inset-0 z-100 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-300"
+            onClick={() => setSelectedImg(null)} // 바깥 클릭 시 닫기
+          >
+            <button 
+              className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors"
+              onClick={() => setSelectedImg(null)}
+            >
+              <Maximize size={32} className="rotate-45" /> {/* X 아이콘 대용 */}
+            </button>
+            
+            <img 
+              src={selectedImg} 
+              alt="Zoomed" 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300" 
+            />
+            
+            <div className="absolute bottom-10 flex gap-4">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open(selectedImg, '_blank');
+                  }}
+                  className="px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold rounded-full backdrop-blur-md transition-all"
+                >
+                  원본 이미지 보기
+                </button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
