@@ -213,6 +213,8 @@ from google.genai import types
 import os
 from dotenv import load_dotenv
 import json
+import cv2
+import numpy as np
 
 # 파일 경로 고정
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -228,9 +230,37 @@ else:
     print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
 
 
-def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space, colors):
+def resize_image_bytes(image_bytes, max_size=1024):
+    try:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            return image_bytes # 디코딩 실패 시 원본 반환
+            
+        h, w = img.shape[:2]
+        if max(h, w) > max_size:
+            scale = max_size / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            
+        _, encoded_img = cv2.imencode('.jpeg', img)
+        return encoded_img.tobytes()
+    except Exception as e:
+        print(f"[Resize Error] {e}")
+        return image_bytes
+
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors):
+
+    image_bytes = resize_image_bytes(image_bytes)
 
     try:
+        #API 호출 직전에 로그 찍기
+        print("\n" + "="*50)
+        print("[서버 로그] Gemini API 호출을 시작한다")
+        print(f"파라미터 체크 -> 밝기: {brightness}, 복잡도: {complexity}")
+        print("="*50 + "\n")
+        
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
@@ -328,7 +358,7 @@ def consult_design(image_bytes,brightness, complexity, saliency, symmetry, space
         
  
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 prompt
@@ -382,7 +412,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
         """
         
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[
                 types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
                 types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
@@ -548,7 +578,7 @@ async def get_reference_images(keywords: list, category: str):
             
             # 구글 이미지 결과에서 원본 이미지 주소만 추출
             images = data.get("images_results", [])
-            links = [img["original"] for img in images if "original" in img] [:-9]
+            links = [img["original"] for img in images if "thumbnail" in img] [:-9]
             
             print(f"[SUCCESS] {len(links)}개의 실제 로고 레퍼런스를 찾았습니다!")
             print("="*50 + "\n")
@@ -811,25 +841,43 @@ function App() {
   };
 
   const analyzeMood = async () => {
+
+    //이미 로딩 중이면 다시 실행되지 않도록 즉시 리턴하기(중복 호출 방지)
+    if (isLoading) return;
+
     if (isCompareMode ? (!file || !file2) : !file) return alert('이미지를 선택해주세요.');
+    
+    //로딩 시작
     setIsLoading(true);
+
+    //요청 보내기 직전 로그
+    console.log("%c [프론트 로그] 서버로 분석 요청 보냄!", "color: #007bff; font-weight: bold; font-size: 14px;");
     const formData = new FormData();
     try {
       if (isCompareMode) {
         formData.append('file1', file!);
         formData.append('file2', file2!);
+        
+        //비교 분석 API 호출
         const response = await axios.post('http://127.0.0.1:8000/compare', formData);
         setCompResult(response.data);
       } else {
         formData.append('file', file!);
         formData.append('remove_bg', String(removeBg));
+
+        //단일 분석 API 호출
         const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
+
+        //응답 받은 직후 로그
+        console.log("%c [프론트 로그] 서버 응답 도착 완료!", "color: #28a745; font-weight: bold; font-size: 14px;");
         console.log("Backend Response:", response.data); // 확인용 로그
         setResult(response.data);
       }
     } catch (error) {
       alert("분석 실패 또는 API 할당량 초과");
-    } finally { setIsLoading(false); }
+    } finally { setIsLoading(false); 
+
+    }
   };
 
   useEffect(() => {
@@ -1039,6 +1087,7 @@ function App() {
                           <img 
                             src={url} 
                             alt={`Ref ${i}`} 
+                            referrerPolicy="no-referrer"
                             className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105" 
                             onError={(e) => { e.currentTarget.parentElement!.style.display = 'none'; }} 
                           />

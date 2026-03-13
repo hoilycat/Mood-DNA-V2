@@ -76,26 +76,45 @@ function App() {
     }
   };
 
+
   const analyzeMood = async () => {
+
+    //이미 로딩 중이면 다시 실행되지 않도록 즉시 리턴하기(중복 호출 방지)
+    if (isLoading) return;
+
     if (isCompareMode ? (!file || !file2) : !file) return alert('이미지를 선택해주세요.');
+    
+    //로딩 시작
     setIsLoading(true);
+
+    //요청 보내기 직전 로그
+    console.log("%c [프론트 로그] 서버로 분석 요청 보냄!", "color: #007bff; font-weight: bold; font-size: 14px;");
     const formData = new FormData();
     try {
       if (isCompareMode) {
         formData.append('file1', file!);
         formData.append('file2', file2!);
+        
+        //비교 분석 API 호출
         const response = await axios.post('http://127.0.0.1:8000/compare', formData);
         setCompResult(response.data);
       } else {
         formData.append('file', file!);
         formData.append('remove_bg', String(removeBg));
+
+        //단일 분석 API 호출
         const response = await axios.post('http://127.0.0.1:8000/analyze', formData);
+
+        //응답 받은 직후 로그
+        console.log("%c [프론트 로그] 서버 응답 도착 완료!", "color: #28a745; font-weight: bold; font-size: 14px;");
         console.log("Backend Response:", response.data); // 확인용 로그
         setResult(response.data);
       }
     } catch (error) {
       alert("분석 실패 또는 API 할당량 초과");
-    } finally { setIsLoading(false); }
+    } finally { setIsLoading(false); 
+
+    }
   };
 
   useEffect(() => {

@@ -12,11 +12,50 @@ def get_image_and_mode(image_bytes):
 def calculate_brightness(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
+
+    # 1.4채널(BGRA)이든 3채널(BGR)이든 일단 3채널(BGR)만 추출
+    bgr_img = img[:, :, :3] if is_logo_mode else img
+    
+    # 2. HSV로 변환 (채도 S를 쓰기 위함)
+    hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
     if is_logo_mode:
-        mask = img[:, :, 3] > 0
-        pixels = img[mask][:, :3]
-        return float(np.mean(pixels)) if len(pixels) > 0 else 0.0
-    return float(np.mean(img))
+        # 투명도 마스크 (기본)
+        alpha = img[:, :, 3]
+        mask = alpha > 0
+        
+        # 필터 A: 가짜 격자무늬(회색/흰색) 제거
+        b, g, r = cv2.split(bgr_img)
+        # 연한 회색 격자(#CCCCCC 부근)와 완전 흰색 제거
+        is_gray_grid = (b > 200) & (b < 215) & (g > 200) & (g < 215) & (r > 200) & (r < 215)
+        is_white_grid = (b > 250) & (g > 250) & (r > 250)
+        
+        # 필터 B: 채도 필터 (무채색/글자색 제거)
+        # 채도(s)가 40보다 큰 '색깔 있는' 픽셀만 골라냄 (검정 글자 탈락!)
+        is_colored = s > 40
+        
+        # 최종 마스크 조합: (투명 아님) AND (격자 아님) AND (색깔 있음)
+        final_mask = mask & (~is_gray_grid) & (~is_white_grid) & is_colored
+        
+        # [예외처리] 만약 필터가 너무 세서 남은 픽셀이 하나도 없다면? 다시 기본 투명 마스크로!
+        if np.count_nonzero(final_mask) == 0:
+            final_mask = mask
+            
+        pixels = bgr_img[final_mask]
+    else:
+        # 일반 이미지는 전체 픽셀 사용
+        pixels = bgr_img.reshape(-1, 3)
+
+    if len(pixels) == 0: return 0.0
+
+    # 3. 지각적 밝기 공식 적용 (사람의 눈처럼)
+    # $Luminance = 0.299R + 0.587G + 0.114B$
+    b_p, g_p, r_p = pixels[:, 0], pixels[:, 1], pixels[:, 2]
+    luma = 0.299 * r_p + 0.587 * g_p + 0.114 * b_p
+    
+    return float(np.mean(luma))
+
 
 def calculate_complexity(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
@@ -101,7 +140,7 @@ def extract_color_dna(image_bytes, k=12, remove_bg=False):
     final = []
     for c in candidates:
         if len(final) >= 5: break
-        # 💡 [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
+        # [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
         if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 45 for f in final):
             final.append(c)
             

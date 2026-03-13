@@ -1,38 +1,36 @@
 from google import genai
 from google.genai import types
+import ollama
 import os
 from dotenv import load_dotenv
 import json
 import cv2
 import numpy as np
 
-# 파일 경로 고정
+# 1. 환경 설정 및 API 키 로드
 current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, "..", "..","..", ".env")
-
+env_path = os.path.join(current_dir, "..", "..", "..", ".env")
 load_dotenv(dotenv_path=env_path)
+
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-#글자 깨짐 방지를 위해 영어로만 출력!
 if not API_KEY:
     print("[ERROR] API_KEY not found in .env file")
 else:
     print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
 
-
+# 2. 이미지 리사이즈 함수
 def resize_image_bytes(image_bytes, max_size=1024):
     try:
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            return image_bytes # 디코딩 실패 시 원본 반환
+        if img is None: 
+            return image_bytes
             
         h, w = img.shape[:2]
         if max(h, w) > max_size:
             scale = max_size / max(h, w)
-            new_w, new_h = int(w * scale), int(h * scale)
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
             
         _, encoded_img = cv2.imencode('.jpeg', img)
         return encoded_img.tobytes()
@@ -40,14 +38,12 @@ def resize_image_bytes(image_bytes, max_size=1024):
         print(f"[Resize Error] {e}")
         return image_bytes
 
+# 3. 단일 디자인 분석 (하이브리드 모드)
 def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors):
-
     image_bytes = resize_image_bytes(image_bytes)
 
-    try:
-        client = genai.Client(api_key=API_KEY)
-        
-        prompt = f"""
+    # 공통 프롬프트
+    prompt = f"""
         
                 당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
                 인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
@@ -135,66 +131,91 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 }}
 
                 """
-        contents =[
-            {"mime_type": "image/jpeg", "data": image_bytes},
-            prompt
-        ]
-        
- 
+
+    # --- 1단계: 제미나이 시도 ---
+    try:
+        print("\n" + "="*50)
+        print("[서버 로그] 1단계: 제미나이(온라인) 호출 시도 중...")
+        client = genai.Client(api_key=API_KEY)
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 prompt
             ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
+            config=types.GenerateContentConfig(response_mime_type="application/json")
         )
+        if response.text:
+            print("[성공] 제미나이가 분석을 완료했습니다.")
+            return json.loads(response.text)
+        else:
+            raise ValueError("제미나이 응답이 비어있습니다.")
 
-        # AI 응답 텍스트가 비어있는지 확인 후 파싱
-        if not response.text:
-            raise ValueError("AI 응답이 비어있습니다.")
-        
-        return json.loads(response.text)
-    
     except Exception as e:
-        print(f"[AI Error] {e}")
-        return {
-            "category": "분석 일시 중단",
-            "mood": "API 사용량이 초과되었습니다.",
-            "advice": "구글 AI 할당량이 다 되었습니다. 약 1분 후 다시 시도해주세요.",
-            "benchmarking_point": "분석이 중단되어 가이드를 생성할 수 없습니다.",
-            "unsplash_keywords": ["abstract painting"], # "error" 대신 예쁜 단어로 교체
-            "suggested_palette": ["#4285F4", "#DB4437", "#F4B400"] 
-        }
+        print(f"[경고] 제미나이 실패(로컬 엔진 전환): {e}")
         
+       # --- 2단계: 로컬 하이브리드 모드 (Llava로 보고 + Exaone으로 비평) ---
+        try:
+            print("[서버 로그] 2단계-1: Llava 모델이 이미지를 스캔합니다...")
+            # 1. Llava에게 이미지 묘사 부탁하기
+            vision_res = ollama.chat(
+                model='llava',
+                messages=[{
+                    'role': 'user',
+                    'content': '이 디자인 결과물을 보고 무엇인지(로고, 캐릭터, 포스터 등)와 주요 특징을 짧게 한국어로 설명해줘.',
+                    'images': [image_bytes] # 여기서 실제 이미지를 던져줍니다!
+                }]
+            )
+            visual_description = vision_res['message']['content']
+            print(f"[Llava 분석 완료]: {visual_description[:50]}...")
+
+            # 2. 엑사원에게 비전 분석 내용을 합쳐서 최종 비평 부탁하기
+            print("[서버 로그] 2단계-2: 엑사원이 비전 분석 내용을 바탕으로 비평을 작성합니다.")
+            
+            # 원래 프롬프트 앞에 Llava의 설명을 붙여줍니다.
+            final_prompt = f"시각적 분석 정보: {visual_description}\n\n" + prompt
+
+            response = ollama.chat(
+                model='exaone3.5',
+                messages=[{'role': 'user', 'content': final_prompt}],
+                format='json' # 엑사원에게 JSON 형식을 강제함
+            )
+            return json.loads(response['message']['content'])
+
+        except Exception as e2:
+            print(f"[최종 에러] 로컬 엔진 마비: {e2}")
+            return {
+                "category": "분석 불가",
+                "mood": "로컬 엔진(Llava/Exaone) 작동 오류",
+                "advice": "Ollama가 실행 중인지, 모델이 설치되었는지 확인하세요.",
+                "benchmarking_point": "분석 중단",
+                "design_keywords": ["error"],
+                "suggested_palette": ["#000000"] 
+            }
+
+# 4. 시안 비교 분석 (하이브리드 모드)
 def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
-    try:
-        client = genai.Client(api_key=API_KEY)
-        
-        prompt = f"""
+    # 공통 프롬프트
+    prompt = f"""
         당신은 세계적인 디자인 비평가입니다. 두 개의 디자인 시안(A안, B안)을 비교 분석하여 최적의 선택을 제안하세요.
-        
         [데이터 분석 정보]
         - A안: 밝기 {stats1['brightness']:.1f}, 복잡도 {stats1['complexity']:.1f}
         - B안: 밝기 {stats2['brightness']:.1f}, 복잡도 {stats2['complexity']:.1f}
         
-        [비교 가이드]
-        1. 시각적 균형과 조형미: 어느 쪽이 더 안정적이고 완성도 높은 형태를 가졌는가?
-        2. 목적 전달력: 브랜드의 핵심 가치를 전달하기에 더 적합한 스타일은 무엇인가?
-        3. 실무적 조언: 선택되지 않은 안에서 가져올 수 있는 장점이나, 공통적으로 개선해야 할 점.
-        
         [출력 형식 - JSON]
         {{
             "winner": "A 또는 B",
-            "summary": "한 줄 총평",
-            "detail_comparison": "두 시안의 차이점과 특징 비교 (줄바꿈 \\n 포함)",
-            "reasoning": "승자를 선택한 결정적인 이유 (줄바꿈 \\n 포함)",
-            "suggested_action": "더 나은 결과를 위해 다음 단계에서 수행해야 할 작업 (줄바꿈 \\n 포함)"
+            "summary": "총평",
+            "detail_comparison": "상세 비교",
+            "reasoning": "선택 이유",
+            "suggested_action": "개선 제안"
         }}
-        """
-        
+    """
+
+    # --- 1단계: 제미나이 시도 ---
+    try:
+        print("[서버 로그] 비교 분석: 제미나이 호출 중...")
+        client = genai.Client(api_key=API_KEY)
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=[
@@ -205,6 +226,25 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
         return json.loads(response.text)
+
     except Exception as e:
-        print(f"[AI Comparison Error] {e}")
-        return {"winner": "N/A", "summary": "분석 중 오류 발생", "detail_comparison": str(e), "reasoning": "N/A", "suggested_action": "N/A"}
+        print(f"[비교 실패] 제미나이 에러로 로컬 엑사원 전환: {e}")
+        
+        # --- 2단계: 엑사원 시도 ---
+        try:
+            print("[서버 로그] 비교 분석: 로컬 엑사원 호출 중...")
+            response = ollama.chat(
+                model='exaone3.5',
+                messages=[{'role': 'user', 'content': prompt}],
+                format='json'
+            )
+            return json.loads(response['message']['content'])
+        except Exception as e2:
+            print(f"[최종 에러] 비교 엔진 마비: {e2}")
+            return {
+                "winner": "N/A", 
+                "summary": "분석 불가", 
+                "detail_comparison": str(e2), 
+                "reasoning": "N/A", 
+                "suggested_action": "N/A"
+            }
