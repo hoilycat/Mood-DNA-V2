@@ -56,7 +56,7 @@ def calculate_brightness(image_bytes):
     
     return float(np.mean(luma))
 
-
+#복잡도
 def calculate_complexity(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -70,6 +70,7 @@ def calculate_complexity(image_bytes):
         score = (np.count_nonzero(edges) / edges.size) * 1000
     return min(float(score), 100.0)
 
+#여백
 def calculate_space_ratio(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -92,6 +93,7 @@ def calculate_symmetry(image_bytes):
         score = 100 - (abs(np.mean(left) - np.mean(right)) / 255 * 500)
     return max(float(score), 0.0)
 
+#현저성
 def calculate_saliency(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -145,3 +147,76 @@ def extract_color_dna(image_bytes, k=12, remove_bg=False):
             final.append(c)
             
     return [c['hex'] for c in final]
+
+def calculate_contrast(image_bytes):
+    """디자인의 명암 대비(가독성 및 강조도) 분석"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    
+    # 그레이스케일 변환
+    gray = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2GRAY)
+    
+    if is_logo_mode:
+        mask = img[:, :, 3] > 0
+        if np.count_nonzero(mask) == 0: return 0.0
+        pixels = gray[mask]
+        contrast = pixels.std() # 배경 제외 픽셀의 표준편차
+    else:
+        contrast = gray.std()
+        
+    # 표준편차 0~128 범위를 0~100 점수로 환산
+    return min(float(contrast * 0.8), 100.0)
+
+def calculate_composition(image_bytes):
+    """삼분할 구도(Rule of Thirds) 및 시각적 균형 분석"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    
+    # 1. Saliency Map 추출 
+    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    success, map = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
+    if not success: return 0.0
+
+    # 2. 시선이 가장 집중되는 '무게 중심' 찾기
+    M = cv2.moments((map * 255).astype(np.uint8))
+    if M["m00"] == 0: return 0.0
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+    
+    h, w = map.shape
+    # 3. 삼분할 지점(4개의 교차점)과의 최소 거리 계산
+    points = [(w/3, h/3), (2/3*w, h/3), (w/3, 2/3*h), (2/3*w, 2/3*h)]
+    min_dist = min([((cx-px)**2 + (cy-py)**2)**0.5 for px, py in points])
+    
+    # 4. 점수화 (가까울수록 100점)
+    max_dist = (w**2 + h**2)**0.5 / 2
+    score = 100 - (min_dist / max_dist * 100)
+    return float(score)
+
+def calculate_aspect_ratio(image_bytes):
+    """이미지의 가로세로비 계산 (가로/세로)"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 1.0
+    h, w = img.shape[:2]
+    return round(w / h, 2)
+
+def calculate_effective_color_count(image_bytes, threshold=0.01):
+    """의미 있는 면적을 차지하는 유효 색상 수 계산"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0
+    
+    # 배경 제외 픽셀 추출
+    pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
+    if len(pixels) < 100: return 0
+    
+    # K-means를 넉넉히(12개) 돌려서 실제로 얼마나 많은 색이 쓰였는지 확인
+    k = 12
+    data = np.float32(pixels)
+    _, labels, _ = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS + 10, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
+    
+    counts = np.bincount(labels.flatten())
+    total = len(pixels)
+    
+    # 전체 면적 중 1%(threshold) 이상을 차지하는 색상만 카운트
+    effective_colors = [c for c in counts if c / total > threshold]
+    return len(effective_colors)

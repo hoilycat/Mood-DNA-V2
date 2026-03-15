@@ -1,6 +1,6 @@
 from google import genai
 from google.genai import types
-import ollama
+#import ollama
 import os
 from dotenv import load_dotenv
 import json
@@ -39,8 +39,11 @@ def resize_image_bytes(image_bytes, max_size=1024):
         return image_bytes
 
 # 3. 단일 디자인 분석 (하이브리드 모드)
-def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors):
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, composition,aspect_ratio, color_count):
     image_bytes = resize_image_bytes(image_bytes)
+
+    # AI가 분야를 더 잘 찍을 수 있게 힌트 생성
+    ratio_desc = "정사각형" if 0.9 <= aspect_ratio <= 1.1 else ("가로형" if aspect_ratio > 1.1 else "세로형")
 
     # 공통 프롬프트
     prompt = f"""
@@ -62,14 +65,30 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 
                 [1단계: 분야 판별 및 페르소나 설정]
                 이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
-                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시.
+                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시. 가로세로비가 1:1에 가깝고, 유효 색상 수가 2~4개 이내이며, 텍스트 밀도가 낮다면 로고/심볼일 확률이 90% 이상입니다.
                 2. 인터페이스(UI/UX): 가용성, 시각적 위계, 반응성 중시.
-                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시.
+                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시. 가로세로비가 1:1.4(A4 등) 혹은 세로로 길며, 색상 수가 5개 이상이고 텍스트 밀도가 높다면 포스터/인쇄물입니다.
                 4. 산업/제품(Industrial): 형태와 기능의 조화, 질감, 인체공학적 시각 요소 중시. 운송 수단(자동차,자전거), 가전, 가구 등 실제 물리적 제품.실용적 디자인 뿐만 아니라 예술적/ 실험적 형태의 시제품도 포함.
                 5. 공간/인테리어(Interior): 분위기, 조명 평형, 공간 대비 중시.
-                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시.
+                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시. 색상 수가 3~6개 사이이며, 구도 안정성이 높고 조형적 특징이 강하다면 캐릭터로 분류하세요.
+                   이미지에 여러 캐릭터가 배치되어 있고 텍스트와 함께 특정 정보를 전달하는 구조라면, 캐릭터가 아닌 그래픽/편집으로 분류하세요. 단, 캐릭터가 이미지의 주된 요소이면서, 그 자체로 독립적인 디자인으로서의 완성도가 높다면 캐릭터/이모티콘으로 분류할 수 있습니다.
                 
-                이미지에 여러 캐릭터가 배치되어 있고 텍스트와 함께 특정 정보를 전달하는 구조라면, 캐릭터가 아닌 그래픽/편집으로 분류하세요. 단, 캐릭터가 이미지의 주된 요소이면서, 그 자체로 독립적인 디자인으로서의 완성도가 높다면 캐릭터/이모티콘으로 분류할 수 있습니다.
+                   
+                   
+                [분야 판별 가이드라인 (종합 분석)]
+                - 데이터 하나에 매몰되지 말고, 지표 간의 '상관관계'를 분석하세요.
+                
+                1. 브랜딩(BI/CI) vs 캐릭터: 
+                   - 둘 다 텍스트 밀도가 낮지만, 브랜딩은 색상 수가 극도로 적고(2~3개) 대칭성이 높습니다.
+                   - 캐릭터는 색상 수가 많을 수 있지만(다채로운 팔레트), '시각적 집중도'가 중앙에 강하게 형성됩니다.
+                
+                2. 그래픽/편집 vs 캐릭터:
+                   - 색상 수가 둘 다 많더라도, '텍스트 밀도'가 높으면 그래픽/편집으로, 텍스트가 거의 없으면 캐릭터/일러스트로 분류하세요.
+                
+                3. 캐릭터의 채도와 개성:
+                   - 유효 색상 수가 10개 이상으로 높더라도, 조형적 특징(눈, 코, 입 등의 데포르메)이 명확하다면 이를 '화려하고 밀도 높은 하이엔드 캐릭터 디자인'으로 해석하세요. 
+                   - 단순히 색이 많다고 '난잡하다'고 비평하지 말고, 그 색상들이 '캐릭터의 개성'을 표현하는지 '디자인적 노이즈'인지 구분하세요.   
+
                 
 
                 [2단계: 데이터의 분야별 재해석]
@@ -79,10 +98,25 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                     - 예(형태 및 곡률): 캐릭터 디자인에서 곡선 위주의 둥글둥글한 형태는 무해함과 귀여움을 상징하지만, 게임 캐릭터의 날카로운 직선과 삼각형 구조는 강력함과 긴장감을 의미함.
                     - 예(대칭성): 높은 대칭성은 캐릭터의 안정감을 주어 친근하게 느껴지게 하지만, 의도적인 비대칭은 캐릭터에 생동감과 성격을 부여함.
 
-                [데이터 분석 결과]
-                    - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
-                    - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
-                    - 주요 색상: {', '.join(colors)}
+                [데이터 분석 결과 (0~100 스케일)]
+                1. 밝기: {brightness:.1f}
+                2. 복잡도 (Edge Density 기반): {complexity:.1f} 
+                - (설명: 값이 높을수록 선과 디테일이 많아 복잡함을 의미)
+                3. 시각적 집중도 (Saliency): {saliency:.1f}
+                - (설명: 특정 지점에 시선이 강하게 머무는 정도)
+                4. 대비 (Contrast): {contrast:.1f}
+                - (설명: 명암 차이가 뚜렷하여 가독성이 높은 정도)
+                5. 구도 안정성 (Rule of Thirds): {composition:.1f}
+                - (설명: 주요 요소가 삼분할 지점에 위치하여 안정감을 주는 정도)
+                6. 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
+                7. 주요 색상: {', '.join(colors)}
+                8. 가로세로비: {aspect_ratio:.2f} ({ratio_desc})
+                9. 유효 색상 수: {color_count}종
+
+                [비평 가이드라인]
+                - 복잡도가 80 이상인데 집중도가 낮다면 "불필요한 노이즈가 시선을 분산시킨다"고 지적하세요.
+                - 구도 안정성이 50 이하라면 "피사체의 위치가 애매하여 조형적 긴장감이 떨어진다"고 비판하세요.
+                - 대비가 낮으면 "디자인이 흐릿하여 메시지 전달력이 부족하다"고 언급하세요.
 
                 [3단계: 최종 비평 리포트 - 한국어로 작성]
                 1. 판별된 디자인 분야: (예: 산업 디자인 - 가전제품)
@@ -108,28 +142,59 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 
                 선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
                 
+
+                
+                [4단계: 시각적 요소 해석 및 환각(Hallucination) 방지 원칙]
+                1. 스타일적 허용(Stylistic Intent) 존중:
+                   - 캐릭터나 아이콘 디자인에서 점(●)이나 선(⌣, ^)으로 표현된 이목구비는 '감은 눈'이나 '노이즈'가 아니라, 해당 화풍의 의도된 '표정'으로 우선 해석하세요.
+                   - 미니멀한 디자인에서 생략된 디테일을 '기술적 부족'으로 몰아세우지 말고, 그 생략이 주는 '상징성'을 먼저 평가하세요.
+
+                2. 객관적 묘사 중심 (상상 금지):
+                   - 이미지에 명확히 드러나지 않은 사물이나 배경 스토리를 지어내지 마세요. (예: 컵 안의 흰 공간을 '얼음'으로 단정 짓거나, 캐릭터에게 임의로 '이름'을 붙여 부르는 행위 금지)
+                   - 시각적 분석 정보(Vision Info)에 언급된 요소와 데이터 수치 사이의 모순이 있다면, 데이터를 우선하되 '해석의 난점'으로 짧게 언급하세요.
+
+                3. 텍스트 및 폰트 비평 금지 조건:
+                   - 이미지 내에 의미 있는 텍스트 덩어리가 감지되지 않았다면(Typography Density 수치가 낮다면), '폰트 가독성'이나 '글자 굵기'에 대한 비평은 리포트에서 완전히 제외하세요.
+
+                4. 전문 용어의 정확한 사용:
+                   - 디자인 분야에 맞는 용어를 쓰세요. (예: 캐릭터라면 '등신대, 곡률, 데포르메', 로고라면 '네거티브 스페이스, 확장성, 심벌' 등)
+
+
+                   
                 [중요 지침: 냉정한 비평]
                     - 디자인의 '완성도(Fidelity)'를 엄격하게 평가하세요.
                     - 해상도가 낮거나, 선이 정리되지 않았거나, 폰트의 조화가 깨진 경우 '전문성이 부족함'을 명확히 지적하세요.
                     - 무조건적인 칭찬은 금지하며, 데이터(복잡도 등)가 높더라도 그것이 '노이즈'나 '난잡함' 때문인지 '의도된 디테일'인지 구분하세요.
                     - 상업적 로고로서의 가독성과 세련미를 최우선으로 평가하세요.
-                
+                    - [중요] 이미지 내에 '텍스트'나 '폰트'가 전혀 없다면, 억지로 폰트를 비평하지 마세요. 대신 조형물 그 자체의 선 굵기와 면 분할에 집중하세요.
+                    - [데이터 기반] 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
+                    - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 작성하되, 실제로 존재하는 요소에 대해서만 조언하세요.
+                    - 없는 요소를 지어내서 비평하는 것은 마스터의 수치입니다. 텍스트가 없으면 텍스트 비평은 생략하세요.
                 
                 [출력 형식 - JSON]
                 주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
-                {{
-                "category": "판별된 분야",
-                "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
-                "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
-                "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
-                "design_keywords": [
-                    "반드시 영어로 작성. 총 4개의 키워드를 아래 규칙에 맞춰 제공하세요.",
-                    "1~2번: 업종 및 대상의 구체적 명칭 (예: 'pharmacy logo', 'bakery branding', 'dog cafe identity')",
-                    "3~4번: 지향해야 할 미학적 스타일 (예: 'swiss style', 'bauhaus design', 'modern minimalist', 'playful organic')"
-                ],
-                "suggested_palette": ["추천 HEX 컬러칩 3개"]
-                }}
-
+                    {{
+                    "category": "판별된 분야",
+                    "total_score": 85, 
+                    "mood": "핵심 인상(줄바꿈 포함)",
+                    "evaluation": {
+                        "brightness": "적절",
+                        "complexity": "다소 높음",
+                        "typography": "없음",
+                        "composition": "안정적",
+                        "color_harmony": "우수"
+                    },
+                    "advice": "심층 비평(줄바꿈 포함)",
+                    "action_checklist": [
+                        "선 굵기를 1.5배 두껍게 조정하여 명시성 확보",
+                        "캐릭터의 시선 방향을 중앙으로 보정",
+                        "배경색 대비를 20% 높여 캐릭터 부각"
+                    ],
+                    "benchmarking_point": "디테일 설명(줄바꿈 포함)",
+                    "design_keywords": ["영어 키워드 4개"],
+                    "suggested_palette": ["HEX 컬러칩 3개"]
+                    }}
+                action_checklist는 실무자가 즉시 수정할 수 있는 구체적인 가이드를 15자 내외의 짧은 문장 3개로 작성하세요.
                 """
 
     # --- 1단계: 제미나이 시도 ---
@@ -156,6 +221,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
         
        # --- 2단계: 로컬 하이브리드 모드 (Llava로 보고 + Exaone으로 비평) ---
         try:
+            import ollama
             print("[서버 로그] 2단계-1: Llava 모델이 이미지를 스캔합니다...")
             # 1. Llava에게 이미지 묘사 부탁하기
             vision_res = ollama.chat(
@@ -163,7 +229,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 messages=[{
                     'role': 'user',
                     'content': '이 디자인 결과물을 보고 무엇인지(로고, 캐릭터, 포스터 등)와 주요 특징을 짧게 한국어로 설명해줘.',
-                    'images': [image_bytes] # 여기서 실제 이미지를 던져줍니다!
+                    'images': [image_bytes] 
                 }]
             )
             visual_description = vision_res['message']['content']
@@ -172,7 +238,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
             # 2. 엑사원에게 비전 분석 내용을 합쳐서 최종 비평 부탁하기
             print("[서버 로그] 2단계-2: 엑사원이 비전 분석 내용을 바탕으로 비평을 작성합니다.")
             
-            # 원래 프롬프트 앞에 Llava의 설명을 붙여줍니다.
+            # 원래 프롬프트 앞에 Llava의 설명을 붙이기
             final_prompt = f"시각적 분석 정보: {visual_description}\n\n" + prompt
 
             response = ollama.chat(
@@ -232,6 +298,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
         
         # --- 2단계: 엑사원 시도 ---
         try:
+            import ollama
             print("[서버 로그] 비교 분석: 로컬 엑사원 호출 중...")
             response = ollama.chat(
                 model='exaone3.5',

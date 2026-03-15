@@ -7,7 +7,11 @@ from app.services.analyzer import (
     calculate_complexity, 
     calculate_saliency, 
     calculate_symmetry, 
-    calculate_space_ratio
+    calculate_space_ratio,
+    calculate_contrast,
+    calculate_composition,
+    calculate_aspect_ratio,
+    calculate_color_count
 )
 from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
@@ -56,11 +60,16 @@ async def analyze_image(
     
     # 💡 중요: extract_color_dna 내에서 배경 제거를 또 하지 않도록 remove_bg=False로 설정
     colors = extract_color_dna(analyze_bytes, k=5, remove_bg=False)
-    
+    contrast_score = calculate_contrast(analyze_bytes)
+    composition_score = calculate_composition(analyze_bytes)
+    aspect_ratio = calculate_aspect_ratio(aspect_ratio)
+    color_count = calculate_color_count(color_count)
+
+
     # 4. AI 컨설턴트에게 분석 요청
     ai_feedback = consult_design(
         analyze_bytes, brightness_score, complexity_score, 
-        saliency, symmetry, space, colors
+        saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio, color_count
     )
     
     # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
@@ -91,7 +100,11 @@ async def analyze_image(
         "symmetry": symmetry,
         "space": space,
         "colors": colors,
-        "reference_images": reference_images
+        "contrast": contrast_score,
+        "composition": composition_score,
+        "reference_images": reference_images,
+        "aspect_ratio": aspect_ratio,
+        "color_count": color_count
     }
     
 @app.post("/compare")
