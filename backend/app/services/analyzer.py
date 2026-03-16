@@ -220,3 +220,27 @@ def calculate_effective_color_count(image_bytes, threshold=0.01):
     # 전체 면적 중 1%(threshold) 이상을 차지하는 색상만 카운트
     effective_colors = [c for c in counts if c / total > threshold]
     return len(effective_colors)
+
+def calculate_typography_ratio(image_bytes):
+    """이미지 내 텍스트(글자)가 차지하는 면적 비율 계산"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    gray = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2GRAY)
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    text_area = 0
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if 1.5 < (w/h) < 20: text_area += cv2.contourArea(cnt)
+    return min(float((text_area / (img.shape[0] * img.shape[1])) * 500), 100.0)
+
+def calculate_color_harmony_score(image_bytes):
+    """색상 조화도 계산"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    hsv = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2HSV)
+    h_pixels = hsv[:,:,0].flatten()
+    if len(h_pixels) == 0: return 0.0
+    return max(0.0, 100 - (np.std(h_pixels) / 90 * 100))

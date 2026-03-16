@@ -11,7 +11,9 @@ from app.services.analyzer import (
     calculate_contrast,
     calculate_composition,
     calculate_aspect_ratio,
-    calculate_color_count
+    calculate_effective_color_count,
+    calculate_typography_ratio,
+    calculate_color_harmony_score
 )
 from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
@@ -62,14 +64,16 @@ async def analyze_image(
     colors = extract_color_dna(analyze_bytes, k=5, remove_bg=False)
     contrast_score = calculate_contrast(analyze_bytes)
     composition_score = calculate_composition(analyze_bytes)
-    aspect_ratio = calculate_aspect_ratio(aspect_ratio)
-    color_count = calculate_color_count(color_count)
-
+    aspect_ratio_score = calculate_aspect_ratio(analyze_bytes)
+    color_count_score = calculate_effective_color_count(analyze_bytes)
+    typo_score = calculate_typography_ratio(analyze_bytes) 
+    harmony_score = calculate_color_harmony_score(analyze_bytes)
 
     # 4. AI 컨설턴트에게 분석 요청
     ai_feedback = consult_design(
         analyze_bytes, brightness_score, complexity_score, 
-        saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio, color_count
+        saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio_score, color_count_score,
+        typo_score,harmony_score
     )
     
     # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
@@ -103,8 +107,10 @@ async def analyze_image(
         "contrast": contrast_score,
         "composition": composition_score,
         "reference_images": reference_images,
-        "aspect_ratio": aspect_ratio,
-        "color_count": color_count
+        "aspect_ratio": aspect_ratio_score,
+        "color_count": color_count_score,
+        "typo_score" : typo_score, 
+        "harmony_score" : harmony_score
     }
     
 @app.post("/compare")

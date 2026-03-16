@@ -26,6 +26,25 @@ with open(output_file, 'w', encoding='utf-8') as f:
                     
 print(f"모든 코드가{output_file}에 저장 되었습니다")
 
+==================================================FILE:.\find_models.py
+==================================================
+
+import google.generativeai as genai
+
+# 1. 아까 그 새 계정에서 받은 API 키를 넣어줘!
+genai.configure(api_key="REMOVED_KEY")
+
+print("🔍 현재 사용 가능한 제미나이 모델 목록:")
+print("-" * 50)
+
+# 2. 제미나이 학교에서 '말하기(generateContent)'가 가능한 친구들만 찾아보기
+for model in genai.list_models():
+    if 'generateContent' in model.supported_generation_methods:
+        # 모델의 진짜 이름(name)과 설명(description)을 출력해줘
+        print(f"✅ 모델명: {model.name}")
+        print(f"   ㄴ 설명: {model.description}")
+        print("-" * 50)
+
 ==================================================FILE:.\backend\app\database.py
 ==================================================
 
@@ -57,7 +76,13 @@ from app.services.analyzer import (
     calculate_complexity, 
     calculate_saliency, 
     calculate_symmetry, 
-    calculate_space_ratio
+    calculate_space_ratio,
+    calculate_contrast,
+    calculate_composition,
+    calculate_aspect_ratio,
+    calculate_effective_color_count,
+    calculate_typography_ratio,
+    calculate_color_harmony_score
 )
 from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
@@ -106,11 +131,18 @@ async def analyze_image(
     
     # 💡 중요: extract_color_dna 내에서 배경 제거를 또 하지 않도록 remove_bg=False로 설정
     colors = extract_color_dna(analyze_bytes, k=5, remove_bg=False)
-    
+    contrast_score = calculate_contrast(analyze_bytes)
+    composition_score = calculate_composition(analyze_bytes)
+    aspect_ratio_score = calculate_aspect_ratio(analyze_bytes)
+    color_count_score = calculate_effective_color_count(analyze_bytes)
+    typo_score = calculate_typography_ratio(analyze_bytes) 
+    harmony_score = calculate_color_harmony_score(analyze_bytes)
+
     # 4. AI 컨설턴트에게 분석 요청
     ai_feedback = consult_design(
         analyze_bytes, brightness_score, complexity_score, 
-        saliency, symmetry, space, colors
+        saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio_score, color_count_score,
+        typo_score,harmony_score
     )
     
     # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
@@ -141,7 +173,13 @@ async def analyze_image(
         "symmetry": symmetry,
         "space": space,
         "colors": colors,
-        "reference_images": reference_images
+        "contrast": contrast_score,
+        "composition": composition_score,
+        "reference_images": reference_images,
+        "aspect_ratio": aspect_ratio_score,
+        "color_count": color_count_score,
+        "typo_score" : typo_score, 
+        "harmony_score" : harmony_score
     }
     
 @app.post("/compare")
@@ -210,39 +248,39 @@ class DesignHistory(Base):
 
 from google import genai
 from google.genai import types
+#import ollama
+import time
 import os
 from dotenv import load_dotenv
 import json
 import cv2
 import numpy as np
 
-# 파일 경로 고정
+# 1. 환경 설정 및 API 키 로드
 current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, "..", "..","..", ".env")
-
+env_path = os.path.join(current_dir, "..", "..", "..", ".env")
 load_dotenv(dotenv_path=env_path)
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-#글자 깨짐 방지를 위해 영어로만 출력!
 if not API_KEY:
     print("[ERROR] API_KEY not found in .env file")
 else:
     print(f"[SUCCESS] API_KEY loaded: {API_KEY[:8]}...")
 
-
+# 2. 이미지 리사이즈 함수
 def resize_image_bytes(image_bytes, max_size=1024):
     try:
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            return image_bytes # 디코딩 실패 시 원본 반환
+        if img is None: 
+            return image_bytes
             
         h, w = img.shape[:2]
         if max(h, w) > max_size:
             scale = max_size / max(h, w)
-            new_w, new_h = int(w * scale), int(h * scale)
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
             
         _, encoded_img = cv2.imencode('.jpeg', img)
         return encoded_img.tobytes()
@@ -250,20 +288,15 @@ def resize_image_bytes(image_bytes, max_size=1024):
         print(f"[Resize Error] {e}")
         return image_bytes
 
-def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors):
-
+# 3. 단일 디자인 분석 (하이브리드 모드)
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, composition,aspect_ratio_score, color_count_score,typo_score,harmony_score):
     image_bytes = resize_image_bytes(image_bytes)
 
-    try:
-        #API 호출 직전에 로그 찍기
-        print("\n" + "="*50)
-        print("[서버 로그] Gemini API 호출을 시작한다")
-        print(f"파라미터 체크 -> 밝기: {brightness}, 복잡도: {complexity}")
-        print("="*50 + "\n")
-        
-        client = genai.Client(api_key=API_KEY)
-        
-        prompt = f"""
+    # AI가 분야를 더 잘 찍을 수 있게 힌트 생성
+    ratio_desc = "정사각형" if 0.9 <= aspect_ratio_score <= 1.1 else ("가로형" if aspect_ratio_score > 1.1 else "세로형")
+
+    # 공통 프롬프트
+    prompt = f"""
         
                 당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
                 인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
@@ -282,14 +315,39 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 
                 [1단계: 분야 판별 및 페르소나 설정]
                 이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
-                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시.
+                1. 브랜딩(BI/CI): 상징성, 단순함, 확장성 중시. 가로세로비가 1:1에 가깝고, 유효 색상 수가 2~4개 이내이며, 텍스트 밀도가 낮다면 로고/심볼일 확률이 90% 이상입니다.
                 2. 인터페이스(UI/UX): 가용성, 시각적 위계, 반응성 중시.
-                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시.
+                3. 그래픽/편집(Print): 타이포그래피, 레이아웃, 색채 조화 중시. 가로세로비가 1:1.4(A4 등) 혹은 세로로 길며, 색상 수가 5개 이상이고 텍스트 밀도가 높다면 포스터/인쇄물입니다.
                 4. 산업/제품(Industrial): 형태와 기능의 조화, 질감, 인체공학적 시각 요소 중시. 운송 수단(자동차,자전거), 가전, 가구 등 실제 물리적 제품.실용적 디자인 뿐만 아니라 예술적/ 실험적 형태의 시제품도 포함.
                 5. 공간/인테리어(Interior): 분위기, 조명 평형, 공간 대비 중시.
-                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시.
+                6. 캐릭터/이모티콘(Character): 키치함(Kitsch), B급 정서, 유머러스함, 조형성, 친밀감, 등신대 비율, 캐릭터의 생명력과 개성 중시. 색상 수가 3~6개 사이이며, 구도 안정성이 높고 조형적 특징이 강하다면 캐릭터로 분류하세요.
+                   이미지에 여러 캐릭터가 배치되어 있고 텍스트와 함께 특정 정보를 전달하는 구조라면, 캐릭터가 아닌 그래픽/편집으로 분류하세요. 단, 캐릭터가 이미지의 주된 요소이면서, 그 자체로 독립적인 디자인으로서의 완성도가 높다면 캐릭터/이모티콘으로 분류할 수 있습니다.
                 
-                이미지에 여러 캐릭터가 배치되어 있고 텍스트와 함께 특정 정보를 전달하는 구조라면, 캐릭터가 아닌 그래픽/편집으로 분류하세요. 단, 캐릭터가 이미지의 주된 요소이면서, 그 자체로 독립적인 디자인으로서의 완성도가 높다면 캐릭터/이모티콘으로 분류할 수 있습니다.
+                   
+                   
+                [분야 판별 가이드라인 (종합 분석)]
+                - 데이터 하나에 매몰되지 말고, 지표 간의 '상관관계'를 분석하세요.
+                
+                1. 브랜딩(BI/CI) vs 캐릭터: 
+                   - 둘 다 텍스트 밀도가 낮지만, 브랜딩은 색상 수가 극도로 적고(2~3개) 대칭성이 높습니다.
+                   - 캐릭터는 색상 수가 많을 수 있지만(다채로운 팔레트), '시각적 집중도'가 중앙에 강하게 형성됩니다.
+                
+                2. 그래픽/편집 vs 캐릭터:
+                   - 색상 수가 둘 다 많더라도, '텍스트 밀도'가 높으면 그래픽/편집으로, 텍스트가 거의 없으면 캐릭터/일러스트로 분류하세요.
+                
+                3. 캐릭터의 채도와 개성:
+                   - 유효 색상 수가 10개 이상으로 높더라도, 조형적 특징(눈, 코, 입 등의 데포르메)이 명확하다면 이를 '화려하고 밀도 높은 하이엔드 캐릭터 디자인'으로 해석하세요. 
+                   - 단순히 색이 많다고 '난잡하다'고 비평하지 말고, 그 색상들이 '캐릭터의 개성'을 표현하는지 '디자인적 노이즈'인지 구분하세요.   
+
+
+                [분야 판별 절대 규칙]
+                1. 텍스트 레이아웃 우선 원칙:
+                - 이미지 하단이나 옆에 '기업명/서비스명'으로 보이는 텍스트 덩어리가 명확히 존재한다면, 상단 그래픽이 캐릭터처럼 보이더라도 '캐릭터/이모티콘'이 아닌 '브랜딩(BI/CI)'으로 분류하세요.
+                - 캐릭터는 보통 텍스트 없이 단독으로 있거나 대사(말풍선)와 함께 있습니다. 하단에 정자체로 된 텍스트가 있다면 그것은 '브랜드 로고'입니다.
+
+                2. 복잡도와 노이즈 구분:
+                - 복잡도가 100에 가깝더라도 그것이 '글자의 외곽선' 때문인지 '화려한 그림' 때문인지 구분하세요. 글자가 많아서 복잡도가 높은 것은 '그래픽/편집'이나 '브랜딩'의 특징입니다.
+
                 
 
                 [2단계: 데이터의 분야별 재해석]
@@ -299,10 +357,25 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                     - 예(형태 및 곡률): 캐릭터 디자인에서 곡선 위주의 둥글둥글한 형태는 무해함과 귀여움을 상징하지만, 게임 캐릭터의 날카로운 직선과 삼각형 구조는 강력함과 긴장감을 의미함.
                     - 예(대칭성): 높은 대칭성은 캐릭터의 안정감을 주어 친근하게 느껴지게 하지만, 의도적인 비대칭은 캐릭터에 생동감과 성격을 부여함.
 
-                [데이터 분석 결과]
-                    - 밝기: {brightness:.1f}, 복잡도: {complexity:.1f}
-                    - 시각적 집중도: {saliency:.1f}, 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
-                    - 주요 색상: {', '.join(colors)}
+                [데이터 분석 결과 (0~100 스케일)]
+                1. 밝기: {brightness:.1f}
+                2. 복잡도 (Edge Density 기반): {complexity:.1f} 
+                - (설명: 값이 높을수록 선과 디테일이 많아 복잡함을 의미)
+                3. 시각적 집중도 (Saliency): {saliency:.1f}
+                - (설명: 특정 지점에 시선이 강하게 머무는 정도)
+                4. 대비 (Contrast): {contrast:.1f}
+                - (설명: 명암 차이가 뚜렷하여 가독성이 높은 정도)
+                5. 구도 안정성 (Rule of Thirds): {composition:.1f}
+                - (설명: 주요 요소가 삼분할 지점에 위치하여 안정감을 주는 정도)
+                6. 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
+                7. 주요 색상: {', '.join(colors)}
+                8. 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc})
+                9. 유효 색상 수: {color_count_score}종
+
+                [비평 가이드라인]
+                - 복잡도가 80 이상인데 집중도가 낮다면 "불필요한 노이즈가 시선을 분산시킨다"고 지적하세요.
+                - 구도 안정성이 50 이하라면 "피사체의 위치가 애매하여 조형적 긴장감이 떨어진다"고 비판하세요.
+                - 대비가 낮으면 "디자인이 흐릿하여 메시지 전달력이 부족하다"고 언급하세요.
 
                 [3단계: 최종 비평 리포트 - 한국어로 작성]
                 1. 판별된 디자인 분야: (예: 산업 디자인 - 가전제품)
@@ -328,102 +401,213 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 
                 선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
                 
+
+                
+                [4단계: 시각적 요소 해석 및 환각(Hallucination) 방지 원칙]
+                1. 스타일적 허용(Stylistic Intent) 존중:
+                   - 캐릭터나 아이콘 디자인에서 점(●)이나 선(⌣, ^)으로 표현된 이목구비는 '감은 눈'이나 '노이즈'가 아니라, 해당 화풍의 의도된 '표정'으로 우선 해석하세요.
+                   - 미니멀한 디자인에서 생략된 디테일을 '기술적 부족'으로 몰아세우지 말고, 그 생략이 주는 '상징성'을 먼저 평가하세요.
+
+                2. 객관적 묘사 중심 (상상 금지):
+                   - 이미지에 명확히 드러나지 않은 사물이나 배경 스토리를 지어내지 마세요. (예: 컵 안의 흰 공간을 '얼음'으로 단정 짓거나, 캐릭터에게 임의로 '이름'을 붙여 부르는 행위 금지)
+                   - 시각적 분석 정보(Vision Info)에 언급된 요소와 데이터 수치 사이의 모순이 있다면, 데이터를 우선하되 '해석의 난점'으로 짧게 언급하세요.
+
+                3. 텍스트 및 폰트 비평 금지 조건:
+                   - 이미지 내에 의미 있는 텍스트 덩어리가 감지되지 않았다면(Typography Density 수치가 낮다면), '폰트 가독성'이나 '글자 굵기'에 대한 비평은 리포트에서 완전히 제외하세요.
+
+                4. 전문 용어의 정확한 사용:
+                   - 디자인 분야에 맞는 용어를 쓰세요. (예: 캐릭터라면 '등신대, 곡률, 데포르메', 로고라면 '네거티브 스페이스, 확장성, 심벌' 등)
+
+
+                   
                 [중요 지침: 냉정한 비평]
                     - 디자인의 '완성도(Fidelity)'를 엄격하게 평가하세요.
                     - 해상도가 낮거나, 선이 정리되지 않았거나, 폰트의 조화가 깨진 경우 '전문성이 부족함'을 명확히 지적하세요.
                     - 무조건적인 칭찬은 금지하며, 데이터(복잡도 등)가 높더라도 그것이 '노이즈'나 '난잡함' 때문인지 '의도된 디테일'인지 구분하세요.
                     - 상업적 로고로서의 가독성과 세련미를 최우선으로 평가하세요.
+                    - [중요] 이미지 내에 '텍스트'나 '폰트'가 전혀 없다면, 억지로 폰트를 비평하지 마세요. 대신 조형물 그 자체의 선 굵기와 면 분할에 집중하세요.
+                    - [데이터 기반] 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
+                    - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 작성하되, 실제로 존재하는 요소에 대해서만 조언하세요.
+                    - 없는 요소를 지어내서 비평하는 것은 마스터의 수치입니다. 텍스트가 없으면 텍스트 비평은 생략하세요.
+                    - 시각적 분석 정보(Llava)와 데이터 분석 결과(OpenCV)가 충돌한다면, 무조건 데이터 분석 결과를 우선하여 비평하세요. Llava는 가끔 환각을 일으키니 수치를 근거로 리포트를 작성하는 것이 마스터의 자존심입니다.
                 
                 
                 [출력 형식 - JSON]
                 주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
-                {{
-                "category": "판별된 분야",
-                "mood": "작성 가이드를 따른 핵심 인상(줄바꿈 포함)",
-                "advice": "전략적 조언과 선택 사항(1~3개)을 통합하여 작성한 심층 비평 내용(줄바꿈 포함)",
-                "benchmarking_point": "레퍼런스 이미지들을 통해 얻어야 할 '한 끗 차이'의 디테일 설명(줄바꿈 포함)",
-                "design_keywords": [
-                    "반드시 영어로 작성. 총 4개의 키워드를 아래 규칙에 맞춰 제공하세요.",
-                    "1~2번: 업종 및 대상의 구체적 명칭 (예: 'pharmacy logo', 'bakery branding', 'dog cafe identity')",
-                    "3~4번: 지향해야 할 미학적 스타일 (예: 'swiss style', 'bauhaus design', 'modern minimalist', 'playful organic')"
-                ],
-                "suggested_palette": ["추천 HEX 컬러칩 3개"]
-                }}
-
+                    {{
+                    "category": "판별된 분야",
+                    "total_score": 85, 
+                    "mood": "핵심 인상(줄바꿈 포함)",
+                    "evaluation": {{
+                        "brightness": "적절",
+                        "complexity": "다소 높음",
+                        "typography": "없음",
+                        "composition": "안정적",
+                        "color_harmony": "우수"
+                    }},
+                    "advice": "심층 비평(줄바꿈 포함)",
+                    "action_checklist": [
+                        "선 굵기를 1.5배 두껍게 조정하여 명시성 확보",
+                        "캐릭터의 시선 방향을 중앙으로 보정",
+                        "배경색 대비를 20% 높여 캐릭터 부각"
+                    ],
+                    "benchmarking_point": "디테일 설명(줄바꿈 포함)",
+                    "design_keywords": ["영어 키워드 4개"],
+                    "suggested_palette": ["HEX 컬러칩 3개"]
+                    }}
+                action_checklist는 실무자가 즉시 수정할 수 있는 구체적인 가이드를 15자 내외의 짧은 문장 3개로 작성하세요.
                 """
-        contents =[
-            {"mime_type": "image/jpeg", "data": image_bytes},
-            prompt
-        ]
-        
- 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
 
-        # AI 응답 텍스트가 비어있는지 확인 후 파싱
-        if not response.text:
-            raise ValueError("AI 응답이 비어있습니다.")
-        
-        return json.loads(response.text)
-    
-    except Exception as e:
-        print(f"[AI Error] {e}")
-        return {
-            "category": "분석 일시 중단",
-            "mood": "API 사용량이 초과되었습니다.",
-            "advice": "구글 AI 할당량이 다 되었습니다. 약 1분 후 다시 시도해주세요.",
-            "benchmarking_point": "분석이 중단되어 가이드를 생성할 수 없습니다.",
-            "unsplash_keywords": ["abstract painting"], # "error" 대신 예쁜 단어로 교체
-            "suggested_palette": ["#4285F4", "#DB4437", "#F4B400"] 
-        }
-        
-def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
+ # --- 0단계: 로컬 Llava로 시각 분석 (모든 텍스트 모델의 '눈' 역할) ---
+    visual_desc = ""
     try:
-        client = genai.Client(api_key=API_KEY)
+        import ollama
+        print("[서버 로그] 0단계: Llava 시각 분석 중...")
+        vision_res = ollama.chat(
+            model='llava',
+            messages=[{{ 
+		    'role': 'user',
+                    'content': """이 이미지를 아주 정밀하게 관찰하고 답해줘.
+ `                      1. 이미지 안에 '글자(Text)'가 적혀 있니? 있다면 뭐라고 적혀 있는지, 어느 위치에 있는지 말해줘.
+                        2. 캐릭터가 있다면, 눈의 모양이 '점(●)'인지 '선(⌣)'인지 명확히 구분해줘.
+                        3. 전체적인 구도가 '로고' 형태니, 아니면 배경이 꽉 찬 '일러스트'니?
+                        4. 추측하지 말고 눈에 보이는 시각적 사실만 5줄 이내로 요약해.""",
+                    'images': [image_bytes]}}]
+        )
+        visual_desc = vision_res['message']['content']
+    except:
+        print("[경고] Llava 시각 분석 실패, 수치로만 진행합니다.")
+
+    full_prompt = f"시각적 분석 정보: {visual_desc}\n\n" + prompt
+    
+    # --- 1순위: 제미나이 '릴레이' 호출 ---
+    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    client = genai.Client(api_key=API_KEY)
+    
+    gemini_success = False
+    for model_name in gemini_models:
+        try:
+            print(f"[서버 로그] 1순위 제미나이 시도 중: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    prompt
+                ],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if response.text:
+                print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
+                return json.loads(response.text)
+        except Exception as e:
+            print(f"[실패] {model_name} 호출 에러: {e}")
+            continue # 다음 모델로 넘어감
         
-        prompt = f"""
+        # --- 2순위: 그록(Groq) 호출 ---
+    if not gemini_success:
+        try:
+            from groq import Groq
+            print("[서버 로그] 2순위: Groq(온라인 백업) 호출...")
+            client = Groq(api_key=GROQ_API_KEY)
+            completion = client.chat.completions.create(
+                messages=[{"role": "user", "content": full_prompt}],
+                model="llama-3.3-70b-versatile",
+                response_format={"type": "json_object"}
+            )
+            return json.loads(completion.choices[0].message.content)
+        except Exception as e2:
+            print(f"[그록 실패] 사유: {e2}")
+
+            # --- 3순위: 엑사원(EXAONE) 로컬 호출 ---
+            try:
+                import ollama
+                print("[서버 로그] 3순위: 엑사원(로컬 오프라인) 호출...")
+                response = ollama.chat(
+                    model='exaone3.5',
+                    messages=[{'role': 'user', 'content': full_prompt}],
+                    format='json'
+                )
+                return json.loads(response['message']['content'])
+            except Exception as e3:
+                return {"category": "분석 불가", "advice": "모든 AI 엔진이 응답하지 않습니다."}
+
+# 4. 시안 비교 분석 (하이브리드 모드)
+def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
+    # 공통 프롬프트
+    prompt = f"""
         당신은 세계적인 디자인 비평가입니다. 두 개의 디자인 시안(A안, B안)을 비교 분석하여 최적의 선택을 제안하세요.
-        
         [데이터 분석 정보]
         - A안: 밝기 {stats1['brightness']:.1f}, 복잡도 {stats1['complexity']:.1f}
         - B안: 밝기 {stats2['brightness']:.1f}, 복잡도 {stats2['complexity']:.1f}
         
-        [비교 가이드]
-        1. 시각적 균형과 조형미: 어느 쪽이 더 안정적이고 완성도 높은 형태를 가졌는가?
-        2. 목적 전달력: 브랜드의 핵심 가치를 전달하기에 더 적합한 스타일은 무엇인가?
-        3. 실무적 조언: 선택되지 않은 안에서 가져올 수 있는 장점이나, 공통적으로 개선해야 할 점.
-        
         [출력 형식 - JSON]
         {{
             "winner": "A 또는 B",
-            "summary": "한 줄 총평",
-            "detail_comparison": "두 시안의 차이점과 특징 비교 (줄바꿈 \\n 포함)",
-            "reasoning": "승자를 선택한 결정적인 이유 (줄바꿈 \\n 포함)",
-            "suggested_action": "더 나은 결과를 위해 다음 단계에서 수행해야 할 작업 (줄바꿈 \\n 포함)"
+            "summary": "총평",
+            "detail_comparison": "상세 비교",
+            "reasoning": "선택 이유",
+            "suggested_action": "개선 제안"
         }}
-        """
+    """
+
+    # --- 1순위: 제미나이 '릴레이' 호출 ---
+    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    client = genai.Client(api_key=API_KEY)
+    
+    gemini_success = False
+    for model_name in gemini_models:
+        try:
+            print(f"[서버 로그] 1순위 제미나이 시도 중: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
+                    types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
+                    prompt
+                ],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if response.text:
+                print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
+                return json.loads(response.text)
+        except Exception as e:
+            print(f"[실패] {model_name} 호출 에러: {e}")
+            continue # 다음 모델로 넘어감
         
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
-                types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
-                prompt
-            ],
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"[AI Comparison Error] {e}")
-        return {"winner": "N/A", "summary": "분석 중 오류 발생", "detail_comparison": str(e), "reasoning": "N/A", "suggested_action": "N/A"}
+        # --- 2순위: 그록(Groq) 호출 ---
+    if not gemini_success:
+        try:
+            from groq import Groq
+            print("[서버 로그] 2순위: Groq(온라인 백업) 호출...")
+            client = Groq(api_key=GROQ_API_KEY)
+            completion = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.3-70b-versatile",
+                response_format={"type": "json_object"}
+            )
+            return json.loads(completion.choices[0].message.content)
+        except Exception as e2:
+            print(f"[그록 실패] 사유: {e2}")
+        
+        # --- 3단계: 엑사원 시도 ---
+        try:
+            import ollama
+            print("[서버 로그] 비교 분석: 로컬 엑사원 호출 중...")
+            response = ollama.chat(
+                model='exaone3.5',
+                messages=[{'role': 'user', 'content': prompt}],
+                format='json'
+            )
+            return json.loads(response['message']['content'])
+        except Exception as e2:
+            print(f"[최종 에러] 비교 엔진 마비: {e2}")
+            return {
+                "winner": "N/A", 
+                "summary": "분석 불가", 
+                "detail_comparison": str(e2), 
+                "reasoning": "N/A", 
+                "suggested_action": "N/A"
+            }
 
 ==================================================FILE:.\backend\app\services\analyzer.py
 ==================================================
@@ -442,12 +626,51 @@ def get_image_and_mode(image_bytes):
 def calculate_brightness(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
-    if is_logo_mode:
-        mask = img[:, :, 3] > 0
-        pixels = img[mask][:, :3]
-        return float(np.mean(pixels)) if len(pixels) > 0 else 0.0
-    return float(np.mean(img))
 
+    # 1.4채널(BGRA)이든 3채널(BGR)이든 일단 3채널(BGR)만 추출
+    bgr_img = img[:, :, :3] if is_logo_mode else img
+    
+    # 2. HSV로 변환 (채도 S를 쓰기 위함)
+    hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    if is_logo_mode:
+        # 투명도 마스크 (기본)
+        alpha = img[:, :, 3]
+        mask = alpha > 0
+        
+        # 필터 A: 가짜 격자무늬(회색/흰색) 제거
+        b, g, r = cv2.split(bgr_img)
+        # 연한 회색 격자(#CCCCCC 부근)와 완전 흰색 제거
+        is_gray_grid = (b > 200) & (b < 215) & (g > 200) & (g < 215) & (r > 200) & (r < 215)
+        is_white_grid = (b > 250) & (g > 250) & (r > 250)
+        
+        # 필터 B: 채도 필터 (무채색/글자색 제거)
+        # 채도(s)가 40보다 큰 '색깔 있는' 픽셀만 골라냄 (검정 글자 탈락!)
+        is_colored = s > 40
+        
+        # 최종 마스크 조합: (투명 아님) AND (격자 아님) AND (색깔 있음)
+        final_mask = mask & (~is_gray_grid) & (~is_white_grid) & is_colored
+        
+        # [예외처리] 만약 필터가 너무 세서 남은 픽셀이 하나도 없다면? 다시 기본 투명 마스크로!
+        if np.count_nonzero(final_mask) == 0:
+            final_mask = mask
+            
+        pixels = bgr_img[final_mask]
+    else:
+        # 일반 이미지는 전체 픽셀 사용
+        pixels = bgr_img.reshape(-1, 3)
+
+    if len(pixels) == 0: return 0.0
+
+    # 3. 지각적 밝기 공식 적용 (사람의 눈처럼)
+    # $Luminance = 0.299R + 0.587G + 0.114B$
+    b_p, g_p, r_p = pixels[:, 0], pixels[:, 1], pixels[:, 2]
+    luma = 0.299 * r_p + 0.587 * g_p + 0.114 * b_p
+    
+    return float(np.mean(luma))
+
+#복잡도
 def calculate_complexity(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -461,6 +684,7 @@ def calculate_complexity(image_bytes):
         score = (np.count_nonzero(edges) / edges.size) * 1000
     return min(float(score), 100.0)
 
+#여백
 def calculate_space_ratio(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -483,6 +707,7 @@ def calculate_symmetry(image_bytes):
         score = 100 - (abs(np.mean(left) - np.mean(right)) / 255 * 500)
     return max(float(score), 0.0)
 
+#현저성
 def calculate_saliency(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -531,11 +756,108 @@ def extract_color_dna(image_bytes, k=12, remove_bg=False):
     final = []
     for c in candidates:
         if len(final) >= 5: break
-        # 💡 [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
+        # [색상 거리 체크] 이미 뽑힌 색과 RGB 거리가 45 이상 차이 나는 '확연히 다른 색'만 추가
         if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 45 for f in final):
             final.append(c)
             
     return [c['hex'] for c in final]
+
+def calculate_contrast(image_bytes):
+    """디자인의 명암 대비(가독성 및 강조도) 분석"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    
+    # 그레이스케일 변환
+    gray = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2GRAY)
+    
+    if is_logo_mode:
+        mask = img[:, :, 3] > 0
+        if np.count_nonzero(mask) == 0: return 0.0
+        pixels = gray[mask]
+        contrast = pixels.std() # 배경 제외 픽셀의 표준편차
+    else:
+        contrast = gray.std()
+        
+    # 표준편차 0~128 범위를 0~100 점수로 환산
+    return min(float(contrast * 0.8), 100.0)
+
+def calculate_composition(image_bytes):
+    """삼분할 구도(Rule of Thirds) 및 시각적 균형 분석"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    
+    # 1. Saliency Map 추출 
+    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
+    success, map = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
+    if not success: return 0.0
+
+    # 2. 시선이 가장 집중되는 '무게 중심' 찾기
+    M = cv2.moments((map * 255).astype(np.uint8))
+    if M["m00"] == 0: return 0.0
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+    
+    h, w = map.shape
+    # 3. 삼분할 지점(4개의 교차점)과의 최소 거리 계산
+    points = [(w/3, h/3), (2/3*w, h/3), (w/3, 2/3*h), (2/3*w, 2/3*h)]
+    min_dist = min([((cx-px)**2 + (cy-py)**2)**0.5 for px, py in points])
+    
+    # 4. 점수화 (가까울수록 100점)
+    max_dist = (w**2 + h**2)**0.5 / 2
+    score = 100 - (min_dist / max_dist * 100)
+    return float(score)
+
+def calculate_aspect_ratio(image_bytes):
+    """이미지의 가로세로비 계산 (가로/세로)"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 1.0
+    h, w = img.shape[:2]
+    return round(w / h, 2)
+
+def calculate_effective_color_count(image_bytes, threshold=0.01):
+    """의미 있는 면적을 차지하는 유효 색상 수 계산"""
+    img, is_logo_mode = get_image_and_mode(image_bytes)
+    if img is None: return 0
+    
+    # 배경 제외 픽셀 추출
+    pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
+    if len(pixels) < 100: return 0
+    
+    # K-means를 넉넉히(12개) 돌려서 실제로 얼마나 많은 색이 쓰였는지 확인
+    k = 12
+    data = np.float32(pixels)
+    _, labels, _ = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS + 10, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
+    
+    counts = np.bincount(labels.flatten())
+    total = len(pixels)
+    
+    # 전체 면적 중 1%(threshold) 이상을 차지하는 색상만 카운트
+    effective_colors = [c for c in counts if c / total > threshold]
+    return len(effective_colors)
+
+def calculate_typography_ratio(image_bytes):
+    """이미지 내 텍스트(글자)가 차지하는 면적 비율 계산"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    gray = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2GRAY)
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    text_area = 0
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if 1.5 < (w/h) < 20: text_area += cv2.contourArea(cnt)
+    return min(float((text_area / (img.shape[0] * img.shape[1])) * 500), 100.0)
+
+def calculate_color_harmony_score(image_bytes):
+    """색상 조화도 계산"""
+    img, _ = get_image_and_mode(image_bytes)
+    if img is None: return 0.0
+    hsv = cv2.cvtColor(img[:,:,:3], cv2.COLOR_BGR2HSV)
+    h_pixels = hsv[:,:,0].flatten()
+    if len(h_pixels) == 0: return 0.0
+    return max(0.0, 100 - (np.std(h_pixels) / 90 * 100))
 
 ==================================================FILE:.\backend\app\services\google_search.py
 ==================================================
@@ -839,6 +1161,7 @@ function App() {
       setCompResult(null);
     }
   };
+
 
   const analyzeMood = async () => {
 

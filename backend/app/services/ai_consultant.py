@@ -1,6 +1,7 @@
 from google import genai
 from google.genai import types
 #import ollama
+import time
 import os
 from dotenv import load_dotenv
 import json
@@ -12,6 +13,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(current_dir, "..", "..", "..", ".env")
 load_dotenv(dotenv_path=env_path)
 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_KEY:
@@ -39,11 +41,11 @@ def resize_image_bytes(image_bytes, max_size=1024):
         return image_bytes
 
 # 3. 단일 디자인 분석 (하이브리드 모드)
-def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, composition,aspect_ratio, color_count):
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, composition,aspect_ratio_score, color_count_score,typo_score,harmony_score):
     image_bytes = resize_image_bytes(image_bytes)
 
     # AI가 분야를 더 잘 찍을 수 있게 힌트 생성
-    ratio_desc = "정사각형" if 0.9 <= aspect_ratio <= 1.1 else ("가로형" if aspect_ratio > 1.1 else "세로형")
+    ratio_desc = "정사각형" if 0.9 <= aspect_ratio_score <= 1.1 else ("가로형" if aspect_ratio_score > 1.1 else "세로형")
 
     # 공통 프롬프트
     prompt = f"""
@@ -89,6 +91,15 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                    - 유효 색상 수가 10개 이상으로 높더라도, 조형적 특징(눈, 코, 입 등의 데포르메)이 명확하다면 이를 '화려하고 밀도 높은 하이엔드 캐릭터 디자인'으로 해석하세요. 
                    - 단순히 색이 많다고 '난잡하다'고 비평하지 말고, 그 색상들이 '캐릭터의 개성'을 표현하는지 '디자인적 노이즈'인지 구분하세요.   
 
+
+                [분야 판별 절대 규칙]
+                1. 텍스트 레이아웃 우선 원칙:
+                - 이미지 하단이나 옆에 '기업명/서비스명'으로 보이는 텍스트 덩어리가 명확히 존재한다면, 상단 그래픽이 캐릭터처럼 보이더라도 '캐릭터/이모티콘'이 아닌 '브랜딩(BI/CI)'으로 분류하세요.
+                - 캐릭터는 보통 텍스트 없이 단독으로 있거나 대사(말풍선)와 함께 있습니다. 하단에 정자체로 된 텍스트가 있다면 그것은 '브랜드 로고'입니다.
+
+                2. 복잡도와 노이즈 구분:
+                - 복잡도가 100에 가깝더라도 그것이 '글자의 외곽선' 때문인지 '화려한 그림' 때문인지 구분하세요. 글자가 많아서 복잡도가 높은 것은 '그래픽/편집'이나 '브랜딩'의 특징입니다.
+
                 
 
                 [2단계: 데이터의 분야별 재해석]
@@ -110,9 +121,12 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 - (설명: 주요 요소가 삼분할 지점에 위치하여 안정감을 주는 정도)
                 6. 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
                 7. 주요 색상: {', '.join(colors)}
-                8. 가로세로비: {aspect_ratio:.2f} ({ratio_desc})
-                9. 유효 색상 수: {color_count}종
-
+                8. 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc})
+                9. 유효 색상 수: {color_count_score}종
+                10. 텍스트 밀도: {typo_score:.1f}  
+                11. 색상 조화도: {harmony_score:.1f}
+                
+                
                 [비평 가이드라인]
                 - 복잡도가 80 이상인데 집중도가 낮다면 "불필요한 노이즈가 시선을 분산시킨다"고 지적하세요.
                 - 구도 안정성이 50 이하라면 "피사체의 위치가 애매하여 조형적 긴장감이 떨어진다"고 비판하세요.
@@ -170,6 +184,8 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                     - [데이터 기반] 현재 데이터(예: 대칭성 vs 복잡도)가 해당 제품/매체의 목적에 부합하는지 분석.
                     - 실무에서 바로 적용 가능한 '디테일 개선 포인트'를 작성하되, 실제로 존재하는 요소에 대해서만 조언하세요.
                     - 없는 요소를 지어내서 비평하는 것은 마스터의 수치입니다. 텍스트가 없으면 텍스트 비평은 생략하세요.
+                    - 시각적 분석 정보(Llava)와 데이터 분석 결과(OpenCV)가 충돌한다면, 무조건 데이터 분석 결과를 우선하여 비평하세요. Llava는 가끔 환각을 일으키니 수치를 근거로 리포트를 작성하는 것이 마스터의 자존심입니다.
+                
                 
                 [출력 형식 - JSON]
                 주의: #이나 *은 사용하지 말고, 오직 아래 구조의 JSON 데이터만 출력하세요.
@@ -177,13 +193,13 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                     "category": "판별된 분야",
                     "total_score": 85, 
                     "mood": "핵심 인상(줄바꿈 포함)",
-                    "evaluation": {
+                    "evaluation": {{
                         "brightness": "적절",
                         "complexity": "다소 높음",
                         "typography": "없음",
                         "composition": "안정적",
                         "color_harmony": "우수"
-                    },
+                    }},
                     "advice": "심층 비평(줄바꿈 포함)",
                     "action_checklist": [
                         "선 굵기를 1.5배 두껍게 조정하여 명시성 확보",
@@ -197,67 +213,85 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 action_checklist는 실무자가 즉시 수정할 수 있는 구체적인 가이드를 15자 내외의 짧은 문장 3개로 작성하세요.
                 """
 
-    # --- 1단계: 제미나이 시도 ---
-    try:
-        print("\n" + "="*50)
-        print("[서버 로그] 1단계: 제미나이(온라인) 호출 시도 중...")
-        client = genai.Client(api_key=API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt
-            ],
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        if response.text:
-            print("[성공] 제미나이가 분석을 완료했습니다.")
-            return json.loads(response.text)
-        else:
-            raise ValueError("제미나이 응답이 비어있습니다.")
+  # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
+    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행합니다.
+    gemini_models = ["gemini-2.5-flash","gemini-2.0-flash", "gemini-1.5-flash"]
+    client = genai.Client(api_key=API_KEY)
+    
+    for model_name in gemini_models:
+        try:
+            print(f"[서버 로그] 1순위 제미나이 시도 중: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"), prompt],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if response.text:
+                print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
+                return json.loads(response.text)
+            
+        except Exception as e:
+            # 만약 429(할당량 초과) 에러라면?
+            if "429" in str(e):
+                print(f"[주의] {model_name} 할당량 초과! 5초 쉬었다가 다음 모델 부르기...")
+                time.sleep(5) # 5초만 쉬기
+            else:
+                print(f"[에러] {model_name} 실패: {e}")
+            continue
 
-    except Exception as e:
-        print(f"[경고] 제미나이 실패(로컬 엔진 전환): {e}")
-        
-       # --- 2단계: 로컬 하이브리드 모드 (Llava로 보고 + Exaone으로 비평) ---
+    # --- 2단계: 제미나이 모두 실패 시, 로컬 비전(Moondream) 가동 ---
+    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 여기서 깨웁니다.
+    print("[서버 로그] 온라인 제미나이 실패. 로컬/백업 엔진으로 전환합니다.")
+    visual_desc = ""
+    try:
+        import ollama
+        print("[서버 로그] 백업을 위한 llama3.2-vision 시각 분석 시작...")
+        vision_res = ollama.chat(
+            model='llama3.2-vision', 
+            messages=[{'role': 'user', 'content': 'Describe this design objectively. Identify the main subject, art style, dominant colors, layout, and any visible text. Focus on visual facts only.', 'images': [image_bytes]}]
+        )
+        visual_desc = vision_res['message']['content']
+    except Exception as vision_err:
+        print(f"[로컬 비전 실패] 올라마가 없거나 모델 에러: {vision_err}")
+        visual_desc = "이미지 시각 정보 없음 (수치 데이터로만 분석 바람)"
+
+
+    full_prompt = f"""
+    [IMPORTANT DATA - Visual Analysis (English)]
+    {visual_desc}
+
+    [CRITIQUE INSTRUCTION]
+    1. Read the English visual data above as a reference.
+    2. YOUR FINAL REPORT MUST BE WRITTEN IN KOREAN ONLY.
+    3. Keep the tone sharp and professional like a 'Design Master'.
+    
+    {prompt}
+    """
+    
+    
+
+    # --- 3단계: 그록(Groq / Llama 3.3) 시도 ---
+    try:
+        from groq import Groq
+        print("[서버 로그] 2순위 그록(Groq) 호출 중...")
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        completion = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": full_prompt}],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"}
+        )
+        return json.loads(completion.choices[0].message.content)
+    except Exception as e2:
+        print(f"[그록 실패] 사유: {e2}")
+
+        # --- 4단계: 엑사원(EXAONE) 로컬 호출 (최종 보루) ---
         try:
             import ollama
-            print("[서버 로그] 2단계-1: Llava 모델이 이미지를 스캔합니다...")
-            # 1. Llava에게 이미지 묘사 부탁하기
-            vision_res = ollama.chat(
-                model='llava',
-                messages=[{
-                    'role': 'user',
-                    'content': '이 디자인 결과물을 보고 무엇인지(로고, 캐릭터, 포스터 등)와 주요 특징을 짧게 한국어로 설명해줘.',
-                    'images': [image_bytes] 
-                }]
-            )
-            visual_description = vision_res['message']['content']
-            print(f"[Llava 분석 완료]: {visual_description[:50]}...")
-
-            # 2. 엑사원에게 비전 분석 내용을 합쳐서 최종 비평 부탁하기
-            print("[서버 로그] 2단계-2: 엑사원이 비전 분석 내용을 바탕으로 비평을 작성합니다.")
-            
-            # 원래 프롬프트 앞에 Llava의 설명을 붙이기
-            final_prompt = f"시각적 분석 정보: {visual_description}\n\n" + prompt
-
-            response = ollama.chat(
-                model='exaone3.5',
-                messages=[{'role': 'user', 'content': final_prompt}],
-                format='json' # 엑사원에게 JSON 형식을 강제함
-            )
+            print("[서버 로그] 최종 3순위 엑사원 호출 중...")
+            response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
             return json.loads(response['message']['content'])
-
-        except Exception as e2:
-            print(f"[최종 에러] 로컬 엔진 마비: {e2}")
-            return {
-                "category": "분석 불가",
-                "mood": "로컬 엔진(Llava/Exaone) 작동 오류",
-                "advice": "Ollama가 실행 중인지, 모델이 설치되었는지 확인하세요.",
-                "benchmarking_point": "분석 중단",
-                "design_keywords": ["error"],
-                "suggested_palette": ["#000000"] 
-            }
+        except Exception as e3:
+            return {"category": "분석 불가", "advice": "모든 AI 엔진이 응답하지 않습니다. 네트워크나 로컬 서버를 확인하세요."}
 
 # 4. 시안 비교 분석 (하이브리드 모드)
 def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
@@ -278,34 +312,75 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
         }}
     """
 
-    # --- 1단계: 제미나이 시도 ---
-    try:
-        print("[서버 로그] 비교 분석: 제미나이 호출 중...")
-        client = genai.Client(api_key=API_KEY)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
-                types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
-                prompt
-            ],
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        return json.loads(response.text)
+  # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
+    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행합니다.
+    gemini_models = ["gemini-2.5-flash","gemini-2.0-flash", "gemini-1.5-flash"]
+    client = genai.Client(api_key=API_KEY)
+    
+    for model_name in gemini_models:
+        try:
+            print(f"[서버 로그] 1순위 제미나이 시도 중: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Part.from_bytes(data=img1_bytes, mime_type="image/jpeg"),
+                    types.Part.from_bytes(data=img2_bytes, mime_type="image/jpeg"),
+                    prompt],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if response.text:
+                print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
+                return json.loads(response.text)
+        except Exception as e:
+            print(f"[실패] {model_name} 에러: {e}")
+            continue 
 
-    except Exception as e:
-        print(f"[비교 실패] 제미나이 에러로 로컬 엑사원 전환: {e}")
-        
-        # --- 2단계: 엑사원 시도 ---
+    # --- 2단계: 제미나이 모두 실패 시, 로컬 비전(Moondream) 가동 ---
+    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 여기서 깨웁니다.
+    print("[서버 로그] 온라인 제미나이 실패. 로컬/백업 엔진으로 전환합니다.")
+    visual_desc = ""
+    try:
+        import ollama
+        # 첫 번째 이미지 분석
+        res1 = ollama.chat(model='llama3.2-vision', messages=[{
+            'role': 'user', 
+            'content': 'Provide a detailed visual description of this image for a professional design comparison. List the key visual elements, color palette, and composition style.', 
+            'images': [img1_bytes]
+        }])
+        # 두 번째 이미지 분석
+        res2 = ollama.chat(model='llama3.2-vision', messages=[{
+            'role': 'user', 
+            'content': 'Provide a detailed visual description of this image for a professional design comparison. List the key visual elements, color palette, and composition style.', 
+            'images': [img2_bytes]
+        }])
+        visual_desc = f"Image A description: {res1['message']['content']}\nImage B description: {res2['message']['content']}"
+    except:
+        visual_desc = "Visual information not available."
+
+    # Groq나 엑사원에게 넘길 최종 프롬프트 합체
+    full_prompt = f"Detailed Visual Analysis (English):\n{visual_desc}\n\n" + prompt
+
+    # --- 3단계: 그록(Groq / Llama 3.3) 시도 ---
+    try:
+        from groq import Groq
+        print("[서버 로그] 2순위 그록(Groq) 호출 중...")
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        completion = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": full_prompt}],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"}
+        )
+        return json.loads(completion.choices[0].message.content)
+    except Exception as e2:
+        print(f"[그록 실패] 사유: {e2}")
+
+        # --- 4단계: 엑사원(EXAONE) 로컬 호출 (최종 보루) ---
         try:
             import ollama
-            print("[서버 로그] 비교 분석: 로컬 엑사원 호출 중...")
-            response = ollama.chat(
-                model='exaone3.5',
-                messages=[{'role': 'user', 'content': prompt}],
-                format='json'
-            )
+            print("[서버 로그] 최종 3순위 엑사원 호출 중...")
+            response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
             return json.loads(response['message']['content'])
+
         except Exception as e2:
             print(f"[최종 에러] 비교 엔진 마비: {e2}")
             return {
