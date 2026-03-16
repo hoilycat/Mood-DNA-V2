@@ -73,3 +73,7 @@ build/
 # 5. OS 관련 파일
 .DS_Store
 Thumbs.db
+
+#6 기타 파일
+project_summary.txt
+find_models.py
