@@ -40,6 +40,7 @@ app.add_middleware(
 async def analyze_image(
     file: UploadFile = File(...),
     remove_bg: bool = Form(True),
+    target_dna: str = Form('{"brightness":50,"complexity":50,"saliency":50,"symmetry":50,"space":50}'),
     db: Session = Depends(get_db)
 ):
     # 1. 이미지 바이트 읽기
@@ -68,12 +69,13 @@ async def analyze_image(
     color_count_score = calculate_effective_color_count(analyze_bytes)
     typo_score = calculate_typography_ratio(analyze_bytes) 
     harmony_score = calculate_color_harmony_score(analyze_bytes)
+    target_dict = json.loads(target_dna)
 
     # 4. AI 컨설턴트에게 분석 요청
     ai_feedback = consult_design(
         analyze_bytes, brightness_score, complexity_score, 
         saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio_score, color_count_score,
-        typo_score,harmony_score
+        typo_score,harmony_score,target_dict
     )
     
     # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
@@ -117,6 +119,7 @@ async def analyze_image(
 async def compare_images(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
+    target_dna: str = Form('{"brightness":50,"complexity":50,"saliency":50,"symmetry":50,"space":50}')
 ):
     img1_bytes = await file1.read()
     img2_bytes = await file2.read()
@@ -124,6 +127,8 @@ async def compare_images(
     # 1. 배경 제거 후 수치 분석 (로직 통일)
     a_bytes = remove(img1_bytes)
     b_bytes = remove(img2_bytes)
+    
+    target_dict = json.loads(target_dna)
 
     stats1 = {
         "brightness": calculate_brightness(a_bytes),
@@ -143,7 +148,7 @@ async def compare_images(
     }
 
     # 2. AI 비교 분석
-    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2)
+    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2, target_dict)
 
     return {
         "comparison": comparison,

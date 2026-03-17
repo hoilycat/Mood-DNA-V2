@@ -41,7 +41,9 @@ def resize_image_bytes(image_bytes, max_size=1024):
         return image_bytes
 
 # 3. 단일 디자인 분석 (하이브리드 모드)
-def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, composition,aspect_ratio_score, color_count_score,typo_score,harmony_score):
+def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, 
+                   composition,aspect_ratio_score, color_count_score,typo_score,harmony_score, target_dna):
+    
     image_bytes = resize_image_bytes(image_bytes)
 
     # AI가 분야를 더 잘 찍을 수 있게 힌트 생성
@@ -54,11 +56,31 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
                 해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
                 아마추어 같은 디자인을 보면 아주 날카롭게 지적하고, 무조건적인 칭찬은 절대 하지 마세요.
-                
+                사용자의 '추구미(Target DNA)'와 실제 분석 결과를 비교하여 비평하세요.
+
+                [1. 사용자의 추구미 (Target DNA - 슬라이더 설정값)]
+                - 밝기: {target_dna['brightness']}, 복잡도: {target_dna['complexity']}
+                - 집중도: {target_dna['saliency']}, 대칭성: {target_dna['symmetry']}, 여백: {target_dna['space']}
+
+                [2. 실제 데이터 분석 결과 (Actual DNA - OpenCV 추출값)]
+                - 명도/밝기: {brightness:.1f} (목표 대비 차이: {abs(brightness - target_dna['brightness']):.1f})
+                - 복잡도(Edge): {complexity:.1f} (목표 대비 차이: {abs(complexity - target_dna['complexity']):.1f})
+                - 시각적 집중도: {saliency:.1f}
+                - 대비(Contrast): {contrast:.1f}, 구도(Composition): {composition:.1f}
+                - 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
+                - 텍스트 밀도: {typo_score:.1f}, 색상 조화도: {harmony_score:.1f}
+                - 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc}), 색상 수: {color_count_score}종
+                - 주요 색상: {', '.join(colors)}
+
+
                 [비평 원칙]
                 1. 데이터(대칭성, 여백 등)가 높더라도 디자인 자체가 촌스럽거나 조형미가 떨어지면 '데이터에만 의존한 지루한 결과물'이라고 비판하세요.
                 2. 선의 굵기, 색상 조합의 촌스러움, 폰트 선택의 부적절함을 실무자 관점에서 '팩트 폭격' 하세요.
                 3. 결과물이 전문 디자이너가 만든 것인지, 그림판으로 만든 아마추어 수준인지 냉정하게 판별하세요.
+                4. 사용자가 설정한 '추구미' 수치와 실제 수치를 대조하여, 목표에 얼마나 도달했는지 팩트 폭격을 하세요.
+                5. 모든 수치(1번~11번)를 비평의 근거로 골고루 활용하세요. 특히 누락되는 수치가 없도록 하세요.
+                6. 목표보다 복잡도가 높으면 "절제 미학의 부족", 낮으면 "밀도감 부족"이라고 구체적으로 지적하세요.
+                
                 #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
                 
                 [중요: 가독성 규칙]
@@ -214,7 +236,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 """
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
-    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행합니다.
+    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
     gemini_models = ["gemini-2.5-flash","gemini-2.0-flash", "gemini-1.5-flash"]
     client = genai.Client(api_key=API_KEY)
     
@@ -240,7 +262,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
             continue
 
     # --- 2단계: 제미나이 모두 실패 시, 로컬 비전(Moondream) 가동 ---
-    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 여기서 깨웁니다.
+    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 깨우기.
     print("[서버 로그] 온라인 제미나이 실패. 로컬/백업 엔진으로 전환합니다.")
     visual_desc = ""
     try:
@@ -313,7 +335,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
     """
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
-    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행합니다.
+    # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
     gemini_models = ["gemini-2.5-flash","gemini-2.0-flash", "gemini-1.5-flash"]
     client = genai.Client(api_key=API_KEY)
     
@@ -336,7 +358,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
             continue 
 
     # --- 2단계: 제미나이 모두 실패 시, 로컬 비전(Moondream) 가동 ---
-    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 여기서 깨웁니다.
+    # 텍스트 전용인 Groq나 EXAONE을 위해 '눈' 역할을 하는 로컬 모델을 깨우기.
     print("[서버 로그] 온라인 제미나이 실패. 로컬/백업 엔진으로 전환합니다.")
     visual_desc = ""
     try:

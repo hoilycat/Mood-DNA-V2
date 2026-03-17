@@ -29,8 +29,16 @@ const StatCard = ({ label, value, max = 100, color, icon: Icon }: any) => (
 // --- 2. 데이터 구조 정의 ---
 interface MoodDnaResult {
   brightness: number; complexity: number; saliency: number; symmetry: number; space: number;
+  contrast: number; composition: number; aspect_ratio: number; color_count: number;
+  typo_score: number; harmony_score: number; // 백엔드 반환값과 이름 맞추기
   colors: string[]; category: string; mood: string; advice: string; benchmarking_point: string;
   design_keywords: string[]; suggested_palette: string[]; reference_images: string[];
+  total_score: number; 
+  evaluation: {
+    brightness: string; complexity: string; typography: string; 
+    composition: string; color_harmony: string;
+  };
+  action_checklist: string[];
 }
 
 interface ComparisonResult {
@@ -59,6 +67,8 @@ function App() {
     { subject: '집중도', A: res.saliency },
     { subject: '대칭성', A: res.symmetry },
     { subject: '여백', A: res.space },
+    { subject: '대비', A: res.contrast },    
+    { subject: '구도', A: res.composition }
   ];
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>, id: number) => {
@@ -75,6 +85,14 @@ function App() {
       setCompResult(null);
     }
   };
+
+  const [targets, setTargets] =useState({
+      brightness: 50,
+      complexity: 50,
+      saliency: 50,
+      symmetry: 50,
+      space: 50
+  });
 
 
   const analyzeMood = async () => {
@@ -94,6 +112,8 @@ function App() {
       if (isCompareMode) {
         formData.append('file1', file!);
         formData.append('file2', file2!);
+
+        formData.append('target_dna', JSON.stringify(targets)); // 슬라이더 값 전송
         
         //비교 분석 API 호출
         const response = await axios.post('http://127.0.0.1:8000/compare', formData);
@@ -174,6 +194,26 @@ function App() {
             </div>
           </div>
 
+       {/* UI 렌더링 (이미지 업로드 하단에 추가 추천)*/}
+        <div className="p-6 bg-secondary/30 rounded-2xl border border-border space-y-4">
+          <h3 className="text-sm font-bold text-primary">당신의 추구미(Target DNA) 설정</h3>
+          {Object.keys(targets).map((key) => (
+            <div key={key} className="space-y-1">
+              <div className="flex justify-between text-[10px] font-bold uppercase">
+                <span>{key}</span>
+                <span>{targets[key as keyof typeof targets]}</span>
+              </div>
+              <input 
+                type="range" min="0" max="100" 
+                value={targets[key as keyof typeof targets]}
+                onChange={(e) => setTargets({...targets, [key]: parseInt(e.target.value)})}
+                className="w-full h-1.5 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+            </div>
+          ))}
+        </div>        
+
+
           {/* Right Panel: Results Area */}
           <div className="lg:col-span-7 space-y-8">
             {isLoading ? (
@@ -220,9 +260,17 @@ function App() {
                 <div className="bg-card rounded-3xl border border-border p-8 relative overflow-hidden shadow-sm">
                   <div className="absolute top-0 left-0 w-1.5 h-full bg-linear-to-b from-primary to-purple-500" />
                   <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold flex items-center gap-2 text-primary">
-                      <Sparkles size={22}/> AI Design Critique
-                    </h2>
+                    {/* 왼쪽: 아이콘 + 제목 + 마스터 점수 */}
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-bold flex items-center gap-2 text-primary">
+                        <Sparkles size={22}/> AI Design Critique
+                      </h2>
+                      <span className="ml-4 text-3xl text-amber-500 font-black drop-shadow-sm">
+                        {result.total_score}점
+                      </span>
+                    </div>
+
+                    {/* 오른쪽: 카테고리 뱃지 */}
                     <span className="px-4 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold uppercase tracking-tight">
                       {result.category}
                     </span>
@@ -238,7 +286,15 @@ function App() {
                     </div>
                   </div>
                 </div>
-
+                {/* Advice 아래에 체크리스트 추가 */}
+                <div className="mt-4 space-y-2">
+                  <h4 className="text-sm font-bold text-foreground">📌 마스터의 핵심 체크리스트</h4>
+                  {result.action_checklist.map((item, idx) => (
+                    <div key={idx} className="text-xs text-muted-foreground flex gap-2">
+                      <span>✅</span> {item}
+                    </div>
+                  ))}
+                </div>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                   <div className="bg-card rounded-3xl border border-border p-6 flex items-center justify-center min-h-75">
                     <ResponsiveContainer width="100%" height={280}>
