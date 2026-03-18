@@ -42,7 +42,9 @@ def resize_image_bytes(image_bytes, max_size=1024):
 
 # 3. 단일 디자인 분석 (하이브리드 모드)
 def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, 
-                   composition,aspect_ratio_score, color_count_score,typo_score,harmony_score, target_dna):
+                   composition,aspect_ratio_score, color_count_score,typo_score,harmony_score, 
+                   saturation_score, roundness_score, straightness_score, smoothness_score,
+                   target_dna, brand_context, detected_text):
     
     image_bytes = resize_image_bytes(image_bytes)
 
@@ -51,27 +53,51 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
 
     # 공통 프롬프트
     prompt = f"""
-        
-                당신은 모든 디자인 영역을 섭렵한 '글로벌 디자인 마스터'입니다. 
-                인사말이나 자기소개는 생략하고, 입력된 이미지와 [데이터 분석 결과]를 바탕으로, 
-                해당 디자인의 '분야'를 먼저 정의한 뒤 그 분야에 최적화된 비평을 제공하세요. 
-                아마추어 같은 디자인을 보면 아주 날카롭게 지적하고, 무조건적인 칭찬은 절대 하지 마세요.
-                사용자의 '추구미(Target DNA)'와 실제 분석 결과를 비교하여 비평하세요.
+                [글로벌 디자인 마스터의 비평 철학]
+                당신은 단순한 비평가가 아니라, 브랜드의 운명을 결정짓는 '디자인 디렉터'입니다. 
+                사용자의 수준이 낮다면 칭찬보다는 '뼈 아픈 현실'을 데이터로 증명하세요.
 
-                [1. 사용자의 추구미 (Target DNA - 슬라이더 설정값)]
-                - 밝기: {target_dna['brightness']}, 복잡도: {target_dna['complexity']}
-                - 집중도: {target_dna['saliency']}, 대칭성: {target_dna['symmetry']}, 여백: {target_dna['space']}
+                [비평 대원칙]
+                1. '데이터의 맹점' 타격: 
+                   - 대칭성이나 구도 점수가 높더라도 조형미가 투박하면 "기계적인 수치만 맞춘 영혼 없는 결과물"이라고 비판하세요.
+                   - 데이터 뒤에 숨은 '심미적 무지함'을 날카롭게 지적하세요.
 
-                [2. 실제 데이터 분석 결과 (Actual DNA - OpenCV 추출값)]
-                - 명도/밝기: {brightness:.1f} (목표 대비 차이: {abs(brightness - target_dna['brightness']):.1f})
-                - 복잡도(Edge): {complexity:.1f} (목표 대비 차이: {abs(complexity - target_dna['complexity']):.1f})
-                - 시각적 집중도: {saliency:.1f}
-                - 대비(Contrast): {contrast:.1f}, 구도(Composition): {composition:.1f}
-                - 대칭성: {symmetry:.1f}, 여백비율: {space:.1f}
-                - 텍스트 밀도: {typo_score:.1f}, 색상 조화도: {harmony_score:.1f}
-                - 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc}), 색상 수: {color_count_score}종
-                - 주요 색상: {', '.join(colors)}
+                2. '상업적 품질' 기준의 팩트 폭격:
+                   - 결과물이 실제 시장에서 통용될 수 있는 '프로의 완성도(Fidelity)'인지, 아니면 '개인적인 낙서' 수준인지 냉정하게 판별하세요.
+                   - 선의 불규칙함, 색상의 오염, 폰트와 아이콘의 부조화를 실무자 관점에서 '기술적 결함'으로 규정하세요.
 
+                3. '추구미'와 '현실'의 괴리 분석:
+                   - 사용자가 설정한 Target DNA와 실제 데이터 사이의 오차(목표 대비 차이)를 근거로 사용자의 '디자인 감각 부재'를 논리적으로 비판하세요. 
+                   - 예: "럭셔리를 지향하면서 여백을 0으로 둔 것은 브랜드에 대한 이해가 전무함을 증명합니다."
+
+                4. 폰트와 심볼의 '불협화음' 지적:
+                   - OCR로 감지된 텍스트와 비전으로 분석된 심볼이 서로 겉돈다면, "정체성이 분열된 혼란스러운 디자인"이라고 쐐기를 박으세요.
+
+                [핵심 분석 체계: 3대 역량 요약 지침]
+                - 모든 비평은 아래 3가지 카테고리로 분류하여 '전문 용어'와 함께 제공하세요:
+                1. 브랜드 전달력 (Brand Identity): 텍스트 가독성 및 무드 정렬 상태.
+                2. 조형적 완성도 (Graphic Quality): 선의 정밀도, 곡률의 미학, 구도의 안정성.
+                3. 기술적 확장성 (Technical Fidelity): 색상 효율성, 대비의 명확성, 축소 시 식별력.
+                사용자의 브랜드 의도({brand_context['industry']})와 실제 분석 결과를 비교하는 것이 핵심입니다.
+
+                ...
+                [시스템 감지 텍스트 (OCR)]
+                - 본문 내용: {detected_text}
+                (이 내용을 바탕으로 브랜드의 명칭과 폰트 적합성을 비평하세요.)
+                ...
+
+
+                [1. 사용자 브랜드 의도 & 추구미]
+                - 산업군: {brand_context['industry']}, 목표 무드: {brand_context['mainMood']} - {brand_context['subMood']}
+                - 브랜드 설명: {brand_context['description']}
+                - 목표 DNA (Target): {target_dna}
+
+                [2. 실제 데이터 분석 결과 (Actual DNA)]
+                - 기본: 밝기 {brightness:.1f}, 채도 {saturation_score:.1f}, 대비 {contrast:.1f}
+                - 조형: 원형도(곡률) {roundness_score:.1f}, 직선성 {straightness_score:.1f}, 매끄러움 {smoothness_score:.1f}
+                - 구성: 복잡도 {complexity:.1f}, 집중도 {saliency:.1f}, 구도 {composition:.1f}, 대칭성 {symmetry:.1f}, 여백 {space:.1f}
+                - 기술: 텍스트밀도 {typo_score:.1f}, 색상수 {color_count_score}종, 조화도 {harmony_score:.1f}
+                - 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc}), 주요 색상: {', '.join(colors)}
 
                 [비평 원칙]
                 1. 데이터(대칭성, 여백 등)가 높더라도 디자인 자체가 촌스럽거나 조형미가 떨어지면 '데이터에만 의존한 지루한 결과물'이라고 비판하세요.
@@ -223,13 +249,13 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                         "color_harmony": "우수"
                     }},
                     "advice": "심층 비평(줄바꿈 포함)",
-                    "action_checklist": [
-                        "선 굵기를 1.5배 두껍게 조정하여 명시성 확보",
-                        "캐릭터의 시선 방향을 중앙으로 보정",
-                        "배경색 대비를 20% 높여 캐릭터 부각"
-                    ],
+                    "action_checklist": [ "구체적 개선안 1", "구체적 개선안 2", "구체적 개선안 3"],
                     "benchmarking_point": "디테일 설명(줄바꿈 포함)",
-                    "design_keywords": ["영어 키워드 4개"],
+                    "design_keywords": [
+                            "반드시 영어로 작성. 현재 디자인의 '단점'이 아니라, 이 디자인이 개선되어 도달해야 할 '목표 스타일'을 4개 제공하세요.",
+                            "1~2번: 구체적인 업종명과 디자인 유형 (예: 'Pharmacy Minimalist Logo', 'Medical Branding Symbol')",
+                            "3~4번: 본받아야 할 미학적 스타일 키워드 (예: 'Clean Geometric Design', 'Modern Swiss Style', 'Friendly Vector Art')"
+                        ],
                     "suggested_palette": ["HEX 컬러칩 3개"]
                     }}
                 action_checklist는 실무자가 즉시 수정할 수 있는 구체적인 가이드를 15자 내외의 짧은 문장 3개로 작성하세요.
@@ -290,7 +316,6 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
     {prompt}
     """
     
-    
 
     # --- 3단계: 그록(Groq / Llama 3.3) 시도 ---
     try:
@@ -298,7 +323,10 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
         print("[서버 로그] 2순위 그록(Groq) 호출 중...")
         groq_client = Groq(api_key=GROQ_API_KEY)
         completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": full_prompt}],
+            messages=[
+                {"role": "system", "content": "You are a professional design critic who only speaks Korean."},
+                {"role": "user", "content": full_prompt}
+                ],
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )

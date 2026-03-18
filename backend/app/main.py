@@ -13,7 +13,11 @@ from app.services.analyzer import (
     calculate_aspect_ratio,
     calculate_effective_color_count,
     calculate_typography_ratio,
-    calculate_color_harmony_score
+    calculate_saturation_ratio,
+    calculate_color_harmony_score,
+    calculate_roundness,
+    calculate_straightness,
+    calculate_smoothness
 )
 from app.services.ai_consultant import consult_design, compare_designs
 from .database import engine, Base, get_db
@@ -41,6 +45,7 @@ async def analyze_image(
     file: UploadFile = File(...),
     remove_bg: bool = Form(True),
     target_dna: str = Form('{"brightness":50,"complexity":50,"saliency":50,"symmetry":50,"space":50}'),
+    brand_context: str = Form(...),
     db: Session = Depends(get_db)
 ):
     # 1. 이미지 바이트 읽기
@@ -53,6 +58,24 @@ async def analyze_image(
             analyze_bytes = remove(image_bytes) # 배경이 제거된 바이트 생성
         except Exception as e:
             print(f"배경 제거 실패: {e}")
+    
+    
+    from app.services.analyzer import analyze_text_with_ocr, get_graphics_only_image
+    ocr_result = analyze_text_with_ocr(analyze_bytes) # 글자 텍스트와 좌표 추출
+    
+    # 글자를 지운 '순수 그래픽 이미지' 생성 (복잡도 분석의 혁명!)
+    if ocr_result["has_text"]:
+        # 글자가 있다면, 글자를 하얀색으로 덮어버린 이미지를 복잡도 계산에 사용해!
+        # 이렇게 해야 폰트 외곽선 때문에 복잡도가 100 나오는 걸 막을 수 있어.
+        graphics_only_bytes = get_graphics_only_image(analyze_bytes, ocr_result["raw_results"])
+        complexity_score = calculate_complexity(graphics_only_bytes)
+    else:
+        # 글자가 없으면 그냥 원래 이미지로 계산
+        complexity_score = calculate_complexity(analyze_bytes)
+    
+    #텍스트 데이터 파싱
+    target_dict = json.loads(target_dna)
+    context_dict = json.loads(brand_context)
     
     # 3. 분석 함수 실행 (배경 제거된 analyze_bytes를 재사용)
     brightness_score = calculate_brightness(analyze_bytes)
@@ -68,14 +91,19 @@ async def analyze_image(
     aspect_ratio_score = calculate_aspect_ratio(analyze_bytes)
     color_count_score = calculate_effective_color_count(analyze_bytes)
     typo_score = calculate_typography_ratio(analyze_bytes) 
+    saturation_score = calculate_saturation_ratio(analyze_bytes)
     harmony_score = calculate_color_harmony_score(analyze_bytes)
     target_dict = json.loads(target_dna)
+    roundness = calculate_roundness(analyze_bytes)
+    straightness = calculate_straightness(analyze_bytes)
+    smoothness = calculate_smoothness(analyze_bytes)
+
 
     # 4. AI 컨설턴트에게 분석 요청
     ai_feedback = consult_design(
         analyze_bytes, brightness_score, complexity_score, 
         saliency, symmetry, space, colors, contrast_score, composition_score, aspect_ratio_score, color_count_score,
-        typo_score,harmony_score,target_dict
+        typo_score, harmony_score,saturation_score,roundness, straightness, smoothness,target_dict, context_dict, ocr_result["text_content"]
     )
     
     # 5. 구글 검색을 통해 레퍼런스 이미지 가져오기
@@ -112,14 +140,19 @@ async def analyze_image(
         "aspect_ratio": aspect_ratio_score,
         "color_count": color_count_score,
         "typo_score" : typo_score, 
-        "harmony_score" : harmony_score
+        "saturation_score" : saturation_score,
+        "harmony_score" : harmony_score,
+        "roundness": roundness, 
+        "straightness": straightness, 
+        "smoothness": smoothness
     }
     
 @app.post("/compare")
 async def compare_images(
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
-    target_dna: str = Form('{"brightness":50,"complexity":50,"saliency":50,"symmetry":50,"space":50}')
+    target_dna: str = Form('{"brightness":50,"complexity":50,"saliency":50,"symmetry":50,"space":50}'),
+    brand_context: str = Form(...)
 ):
     img1_bytes = await file1.read()
     img2_bytes = await file2.read()
@@ -128,8 +161,10 @@ async def compare_images(
     a_bytes = remove(img1_bytes)
     b_bytes = remove(img2_bytes)
     
+    #텍스트 데이터 파싱
     target_dict = json.loads(target_dna)
-
+    context_dict = json.loads(brand_context)
+    
     stats1 = {
         "brightness": calculate_brightness(a_bytes),
         "complexity": calculate_complexity(a_bytes),
@@ -148,7 +183,7 @@ async def compare_images(
     }
 
     # 2. AI 비교 분석
-    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2, target_dict)
+    comparison = compare_designs(img1_bytes, img2_bytes, stats1, stats2,target_dict)
 
     return {
         "comparison": comparison,
