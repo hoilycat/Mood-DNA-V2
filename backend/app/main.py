@@ -1,6 +1,7 @@
 from app.services.google_search import get_reference_images
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List
 from app.services.analyzer import (
     calculate_brightness, 
     extract_color_dna, 
@@ -191,3 +192,53 @@ async def compare_images(
         "stats2": stats2
     }
     
+@app.post("/analyze-batch")
+async def analyze_batch(
+    files: List[UploadFile] = File(...),
+    target_dna: str = Form(...),
+    brand_context: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    target_dict = json.loads(target_dna)
+    context_dict = json.loads(brand_context)
+    
+    batch_results = []
+
+    for file in files:
+        # 1. 파일 읽기
+        image_bytes = await file.read()
+        
+        # 2. 분석 (기존 개별 분석 로직 재사용)
+        # 우선 속도를 위해 rembg(배경제거)는 선택사항으로 두거나 일단 원본으로 돌려보자
+        brightness = calculate_brightness(image_bytes)
+        complexity = calculate_complexity(image_bytes)
+        saliency = calculate_saliency(image_bytes)
+        symmetry = calculate_symmetry(image_bytes)
+        space = calculate_space_ratio(image_bytes)
+        # ... (나머지 지표들도 동일하게 호출)
+        
+        # 3. 점수 계산 (일치도)
+        # 여기서 간단한 거리 계산 로직을 사용해 순위를 매깁니다.
+        actual_stats = {"brightness": brightness, "complexity": complexity, "saliency": saliency, "symmetry": symmetry, "space": space}
+        
+        # 가중치 거리 계산 (임시)
+        score = 100 - (abs(target_dict['complexity'] - complexity) + abs(target_dict['space'] - space)) / 2
+        
+        batch_results.append({
+            "filename": file.filename,
+            "score": round(score, 1),
+            "stats": actual_stats
+        })
+
+    # 4. 점수순 정렬
+    sorted_results = sorted(batch_results, key=lambda x: x['score'], reverse=True)
+
+    # 5. AI에게 전체 리포트 요청 (오디션 심사평)
+    # 이 부분은 ai_consultant.py에 새로운 함수를 만듦
+    from app.services.ai_consultant import consult_batch_audition
+    master_report = consult_batch_audition(sorted_results, target_dict, context_dict)
+
+    return {
+        "ranking": sorted_results,
+        "master_report": master_report
+    }

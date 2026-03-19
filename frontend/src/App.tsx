@@ -61,6 +61,15 @@ interface MoodDnaResult {
   };
 }
 
+const industries = [
+  "IT / 테크 스타트업", 
+  "카페 / 베이커리", 
+  "의료 / 제약", 
+  "하이엔드 패션 / 명품", 
+  "영화 / 엔터테인먼트",  // 추가됨
+  "박물관 / 예술 전시",    // 추가됨
+  "기타 (직접 입력)"
+];
 
 // 타입 정의를 위해 DB를 상수로 관리
 const MOOD_DATABASE = {
@@ -72,8 +81,16 @@ const MOOD_DATABASE = {
     'Healthcare': { brightness: 80, complexity: 25, saliency: 60, symmetry: 70, space: 75 },
     'Travel_Nature': { brightness: 65, complexity: 40, saliency: 80, symmetry: 50, space: 60 },
     'Vintage_Retro': { brightness: 55, complexity: 65, saliency: 50, symmetry: 45, space: 50 },
-    'Home_Living': { brightness: 75, complexity: 30, saliency: 40, symmetry: 80, space: 80 }
-  },
+    'Home_Living': { brightness: 75, complexity: 30, saliency: 40, symmetry: 80, space: 80 },
+    'Naive_Handcrafted': { brightness: 80, complexity: 25,    // 형태는 단순하게
+                           saliency: 40, symmetry: 35,      // 일부러 틀어지게
+                           space: 80,         // 여백은 넉넉하게
+                           saturation: 45,    // 약간 바랜 느낌
+                           contrast: 40, roundness: 90,     // 뭉글뭉글하게
+                           straightness: 10,  // 직선은 거의 없게
+                           smoothness: 15     // 선은 삐뚤삐뚤하게 (핵심!)
+    }
+    },
    // ⚡ 2. Impact & Dynamic (강렬함, 역동성, 개성)
   'Impact_Dynamic': {
     'Gaming_Ent': { brightness: 40, complexity: 90, saliency: 90, symmetry: 30, space: 30 },
@@ -96,11 +113,28 @@ const MOOD_DATABASE = {
     // 🎨 4. Artistic & High-End (우아함, 권위, 예술성)
   'Artistic_Luxury': {
     'Luxury_Classic': { brightness: 40, complexity: 15, saliency: 30, symmetry: 90, space: 95, saturation: 10, contrast: 90 },
-    'Museum_Exhibition': { brightness: 50, complexity: 40, saliency: 50, symmetry: 85, space: 80, saturation: 15, contrast: 75 }, // 🏛️ 박물관/예술 추가!
+    'Museum_Exhibition': { brightness: 50, complexity: 40, saliency: 50, symmetry: 85, space: 80, saturation: 15, contrast: 75 }, 
     'Magazine_Editorial': { brightness: 65, complexity: 50, saliency: 60, symmetry: 80, space: 80, saturation: 15, contrast: 85 },
     'Minimal_Modern': { brightness: 70, complexity: 10, saliency: 20, symmetry: 85, space: 90, saturation: 10, contrast: 60 }
-  }
-  
+  },
+    // 🎞️ 5. Retro & Nostalgic (아날로그, 향수, 거친 질감)
+  'Retro_Vintage': {
+    'Y2K_Vibe': { brightness: 80, complexity: 85, saliency: 90, symmetry: 40, space: 30, saturation: 90, contrast: 80, roundness: 70, straightness: 30, smoothness: 20 },
+    'Classic_Film': { brightness: 50, complexity: 60, saliency: 50, symmetry: 70, space: 50, saturation: 40, contrast: 45, roundness: 50, straightness: 40, smoothness: 10 },
+    'Industrial_Rough': { brightness: 40, complexity: 90, saliency: 60, symmetry: 50, space: 40, saturation: 30, contrast: 70, roundness: 20, straightness: 80, smoothness: 5 }
+  },
+  // 🏢 6. Official & Trust (정석, 권위, 보수적)
+  'Official_Standard': {
+    'Government': { brightness: 60, complexity: 20, saliency: 40, symmetry: 100, space: 70, saturation: 40, contrast: 70, roundness: 30, straightness: 90, smoothness: 95 },
+    'Law_Expert': { brightness: 30, complexity: 30, saliency: 50, symmetry: 95, space: 80, saturation: 20, contrast: 90, roundness: 10, straightness: 95, smoothness: 98 },
+    'Medical_Pro': { brightness: 85, complexity: 25, saliency: 60, symmetry: 90, space: 75, saturation: 30, contrast: 60, roundness: 60, straightness: 70, smoothness: 95 }
+  },
+  // 🛍️ 7. Retail & Commercial (실용적, 가시성, 세일즈)
+  'Commercial_Retail': {
+    'E_Commerce': { brightness: 90, complexity: 70, saliency: 95, symmetry: 80, space: 40, saturation: 85, contrast: 90, roundness: 50, straightness: 80, smoothness: 95 },
+    'Luxury_Mall': { brightness: 40, complexity: 15, saliency: 40, symmetry: 90, space: 95, saturation: 10, contrast: 95, roundness: 20, straightness: 85, smoothness: 98 },
+    'Food_Delivery': { brightness: 75, complexity: 65, saliency: 98, symmetry: 50, space: 30, saturation: 98, contrast: 85, roundness: 80, straightness: 20, smoothness: 90 }
+  }  
 };
 
 function App() {
@@ -126,6 +160,19 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [removeBg, setRemoveBg] = useState(false);
   const [isDark, setIsDark] = useState(true);
+
+  // 1. 상태 추가
+  const [batchFiles, setBatchFiles] = useState<FileList | null>(null);
+  const [batchResult, setBatchResult] = useState<any>(null);
+  const [isBatchMode, setIsBatchMode] = useState(false);
+
+  // 2. 파일 핸들러 수정
+  const handleBatchFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setBatchFiles(e.target.files);
+    }
+  };
+
 
   // --- 4. 위저드 함수 ---
   const handleEnergySelect = (energy: keyof typeof MOOD_DATABASE) => {
@@ -190,13 +237,33 @@ function App() {
     } finally { setIsLoading(false); }
   };
 
+    //analyzeBatch 함수
+  const analyzeBatch = async () => {
+    if (!batchFiles || batchFiles.length === 0) return alert('파일들을 선택해주세요.');
+
+    const formData = new FormData();
+    // 여러 파일을 'files'라는 이름으로 담기
+    Array.from(batchFiles).forEach((f) => formData.append('files', f));
+    formData.append('target_dna', JSON.stringify(targets));
+    formData.append('brand_context', JSON.stringify(context));
+
+    try {
+      const response = await axios.post('http://127.0.0.1:8000/analyze-batch', formData);
+
+      setBatchResult(response.data); 
+    } catch (error) {
+      alert("폴더 분석 실패");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  return (
+return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary">
-      {/* 헤더 */}
       <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/80 backdrop-blur-md px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-xl">
           <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold">M</div>
@@ -204,50 +271,36 @@ function App() {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex bg-secondary rounded-full p-1 border border-border">
-            <button onClick={() => {setIsCompareMode(false); setResult(null); setCompResult(null); setStep(1);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${!isCompareMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>Single</button>
-            <button onClick={() => {setIsCompareMode(true); setResult(null); setCompResult(null); setStep(1);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isCompareMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>A/B Test</button>
+            <button onClick={() => {setIsCompareMode(false); setIsBatchMode(false); setStep(1); setResult(null);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${!isCompareMode && !isBatchMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>Single</button>
+            <button onClick={() => {setIsCompareMode(true); setIsBatchMode(false); setStep(1); setResult(null);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isCompareMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>A/B Test</button>
+            <button onClick={() => {setIsBatchMode(true); setIsCompareMode(false); setStep(1); setResult(null);}} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isBatchMode ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground'}`}>Batch</button>
           </div>
-          <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-full hover:bg-muted transition-colors">
-            {isDark ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
+          <button onClick={() => setIsDark(!isDark)} className="p-2 rounded-full hover:bg-muted transition-colors">{isDark ? <Sun size={20} /> : <Moon size={20} />}</button>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 pt-24 pb-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          {/* --- 왼쪽 사이드바 (Step-by-Step 위저드) --- */}
           <div className="lg:col-span-5 space-y-6">
-            
             {step === 1 && (
               <div className="bg-card rounded-3xl border border-border p-8 shadow-sm space-y-8 animate-in slide-in-from-left-4">
-                <div className="space-y-2">
-                  <span className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2"><Briefcase size={14}/> Step 01</span>
-                  <h2 className="text-3xl font-black leading-tight">당신의 브랜드는 어떤<br/><span className="text-primary">에너지</span>를 가졌나요?</h2>
-                </div>
+                <div className="space-y-2"><span className="text-primary font-bold text-xs uppercase tracking-widest flex items-center gap-2"><Briefcase size={14}/> Step 01</span><h2 className="text-3xl font-black leading-tight">당신의 브랜드는 어떤<br/><span className="text-primary">에너지</span>를 가졌나요?</h2></div>
                 <div className="grid grid-cols-1 gap-3">
                   {Object.keys(MOOD_DATABASE).map((energy) => (
                     <button key={energy} onClick={() => handleEnergySelect(energy as any)} className="flex items-center justify-between p-6 rounded-2xl bg-secondary/50 hover:bg-primary hover:text-white transition-all group border border-transparent hover:border-primary/20">
-                      <span className="font-black text-lg">{energy.replace('_', ' & ')}</span>
-                      <Zap size={20} className="opacity-20 group-hover:opacity-100 transition-all" />
+                      <span className="font-black text-lg">{energy.replace('_', ' & ')}</span><Zap size={20} className="opacity-20 group-hover:opacity-100 transition-all" />
                     </button>
                   ))}
                 </div>
               </div>
             )}
-
             {step === 2 && (
               <div className="bg-card rounded-3xl border border-border p-8 shadow-sm space-y-8 animate-in slide-in-from-right-4">
-                <div className="flex items-center justify-between">
-                  <button onClick={() => setStep(1)} className="text-xs font-bold text-muted-foreground hover:text-primary">← 뒤로가기</button>
-                  <span className="text-primary font-bold text-xs uppercase tracking-widest">Step 02</span>
-                </div>
+                <div className="flex items-center justify-between"><button onClick={() => setStep(1)} className="text-xs font-bold text-muted-foreground hover:text-primary">← 뒤로가기</button><span className="text-primary font-bold text-xs uppercase tracking-widest">Step 02</span></div>
                 <h2 className="text-3xl font-black leading-tight">더 구체적인<br/><span className="text-primary">분야</span>를 알려주세요.</h2>
                 <div className="flex flex-wrap gap-2">
                   {Object.keys(MOOD_DATABASE[context.mainMood]).map((sub) => (
-                    <button key={sub} onClick={() => handleSubMoodSelect(sub)} className="px-6 py-4 rounded-2xl bg-secondary font-black text-sm hover:ring-2 hover:ring-primary transition-all border border-border text-left w-full">
-                      # {sub.replace('_', ' ')}
-                    </button>
+                    <button key={sub} onClick={() => handleSubMoodSelect(sub)} className="px-6 py-4 rounded-2xl bg-secondary font-black text-sm hover:ring-2 hover:ring-primary transition-all border border-border text-left w-full"># {sub.replace('_', ' ')}</button>
                   ))}
                 </div>
               </div>
@@ -256,74 +309,97 @@ function App() {
             {step === 3 && (
               <div className="space-y-6 animate-in zoom-in-95">
                 <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6">
-                  <div className="flex justify-between items-center border-b border-border pb-4">
-                    <div className="flex items-center gap-2 text-primary font-bold text-sm"><Sparkles size={18}/> 1. 브랜드 정보</div>
-                    <button onClick={() => setStep(1)} className="text-[10px] font-bold text-muted-foreground underline">다시 설정</button>
+                  <div className="flex justify-between items-center border-b border-border pb-4"><div className="flex items-center gap-2 text-primary font-bold text-sm"><Sparkles size={18}/> 1. 브랜드 정보</div><button onClick={() => setStep(1)} className="text-[10px] font-bold text-muted-foreground underline">다시 설정</button></div>
+                                 
+                  {/* 3-1. 설정 요약 & 설명 입력 구역 내부 */}
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">산업군 선택</label>
+                    
+                    <select 
+                      className="w-full bg-secondary p-2.5 rounded-xl text-sm border-none focus:ring-2 focus:ring-primary transition-all" 
+                      value={industries.includes(context.industry) ? context.industry : "기타 (직접 입력)"} 
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val !== "기타 (직접 입력)") {
+                          setContext({...context, industry: val});
+                        } else {
+                          setContext({...context, industry: ""}); // 기타 선택 시 일단 비움
+                        }
+                      }}
+                    >
+                      {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
+                    </select>
+
+                    {/* [핵심] 기타를 선택했거나 리스트에 없는 값을 입력 중일 때 나타나는 입력창 */}
+                    {(!industries.includes(context.industry) || context.industry === "") && (
+                      <div className="animate-in slide-in-from-top-2 duration-300">
+                        <input 
+                          type="text"
+                          placeholder="분야를 직접 입력하세요 (예: 사이버펑크 영화)"
+                          className="w-full bg-primary/5 border border-primary/20 p-3 rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
+                          value={context.industry}
+                          onChange={(e) => setContext({...context, industry: e.target.value})}
+                          autoFocus
+                        />
+                      </div>
+                    )}
                   </div>
-                  <select className="w-full bg-secondary p-2.5 rounded-xl text-sm border-none focus:ring-2 focus:ring-primary" value={context.industry} onChange={(e) => setContext({...context, industry: e.target.value})}>
-                    <option>IT / 테크 스타트업</option>
-                    <option>카페 / 베이커리</option>
-                    <option>의료 / 제약</option>
-                    <option>하이엔드 패션 / 명품</option>
-                  </select>
-                  <textarea placeholder="브랜드 설명을 적어주세요..." className="w-full bg-secondary p-4 rounded-2xl text-sm border-none h-24 resize-none" onChange={(e) => setContext({...context, description: e.target.value})} />
+
                 </div>
 
                 <div className="p-6 bg-secondary/30 rounded-3xl border border-border space-y-6">
                   <h3 className="text-[10px] font-black uppercase text-primary flex items-center gap-2"><Target size={14}/> 2. Target DNA Fine-Tuning</h3>
-                  <div className="grid grid-cols-1 gap-6">
+                  <div className="grid grid-cols-1 gap-5 px-4 max-w-[95%] mx-auto">
                     {Object.keys(targets).map((key) => {
                       const labels: any = { brightness: ["Dark", "Bright"], complexity: ["Simple", "Complex"], saliency: ["Soft", "Sharp"], symmetry: ["Organic", "Formal"], space: ["Dense", "Airy"] };
+                      if (['saturation', 'contrast', 'color_range'].includes(key)) return null;
                       return (
                         <div key={key} className="space-y-2">
-                          <div className="flex justify-between items-center px-1"><span className="text-[9px] font-black uppercase text-muted-foreground/80">{key}</span><span className="text-[10px] font-mono font-bold text-primary">{(targets as any)[key]}</span></div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-[8px] font-bold text-muted-foreground/30 w-7">{labels[key]?.[0]}</span>
-                            <input type="range" min="0" max="100" value={(targets as any)[key]} onChange={(e) => setTargets({...targets, [key]: parseInt(e.target.value)})} className="flex-1 h-1 bg-background rounded-lg appearance-none cursor-pointer accent-primary" />
-                            <span className="text-[8px] font-bold text-muted-foreground/30 w-7 text-right">{labels[key]?.[1]}</span>
-                          </div>
+                          <div className="flex justify-between items-center"><span className="text-[9px] font-black uppercase text-muted-foreground/80">{key}</span><span className="text-[10px] font-mono font-bold text-primary">{(targets as any)[key]}</span></div>
+                          <div className="flex items-center gap-3"><span className="text-[8px] font-bold text-muted-foreground/30 w-7">{labels[key]?.[0]}</span><input type="range" min="0" max="100" value={(targets as any)[key]} onChange={(e) => setTargets({...targets, [key]: parseInt(e.target.value)})} className="flex-1 h-1 bg-background rounded-lg appearance-none cursor-pointer accent-primary" /><span className="text-[8px] font-bold text-muted-foreground/30 w-7 text-right">{labels[key]?.[1]}</span></div>
                         </div>
                       )
                     })}
                   </div>
                 </div>
-
-                <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6">
-                  {/* --- 배경 제거 옵션 추가 --- */}
-                  <div className="flex items-center justify-between p-4 bg-secondary/20 rounded-2xl border border-border/50 mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded-lg ${removeBg ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>
-                        <Palette size={14} />
-                      </div>
-                      <label htmlFor="bg-toggle" className="text-xs font-bold cursor-pointer">
-                        배경 자동 제거 (AI)
+                {/* 조건부 업로드 섹션 */}
+                {isBatchMode ? (
+                  <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6 animate-in fade-in">
+                    <div className="flex items-center gap-2 text-primary font-bold text-sm"><Grid size={18}/> 3. 시안 폴더 업로드 (오디션)</div>
+                    <div className="bg-primary/5 rounded-2xl border-2 border-dashed border-primary/20 p-8">
+                      <label className="flex flex-col items-center cursor-pointer group">
+                        <div className="p-4 bg-primary/10 rounded-full text-primary mb-3 group-hover:scale-110 transition-transform"><Grid size={32} /></div>
+                        <span className="text-sm font-bold">이미지 파일들 선택하기</span>
+                        <input type="file" multiple accept="image/*" className="hidden" onChange={handleBatchFileChange} />
+                        <p className="text-[10px] text-muted-foreground mt-2">{batchFiles ? `${batchFiles.length}개의 시안 준비됨` : "파일들을 한꺼번에 드래그하세요"}</p>
                       </label>
                     </div>
-                    <input 
-                      type="checkbox" 
-                      id="bg-toggle" 
-                      checked={removeBg} 
-                      onChange={(e) => setRemoveBg(e.target.checked)} 
-                      className="w-5 h-5 accent-primary cursor-pointer" 
-                    />
+                    <button onClick={analyzeBatch} disabled={isLoading || !batchFiles} className="w-full h-16 rounded-2xl bg-primary text-white font-black text-lg shadow-lg active:scale-95 transition-all">시안 오디션 시작</button>
                   </div>
-                  <div className={`grid ${isCompareMode ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
-                    <div className="aspect-square bg-secondary/30 rounded-2xl border-2 border-dashed border-border flex items-center justify-center relative overflow-hidden group">
-                      {preview ? <img src={preview} alt="P1" className="w-full h-full object-contain" /> : <ImageIcon className="opacity-20" size={40}/>}
-                      <label className="absolute inset-0 cursor-pointer"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 1)} accept="image/*" /></label>
+                ) : (
+                  <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6">
+                    <div className="flex items-center justify-between p-4 bg-secondary/20 rounded-2xl border border-border/50">
+                      <div className="flex items-center gap-2"><div className={`p-1.5 rounded-lg ${removeBg ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}><Palette size={14} /></div><label htmlFor="bg-toggle" className="text-xs font-bold cursor-pointer">배경 자동 제거 (AI)</label></div>
+                      <input type="checkbox" id="bg-toggle" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} className="w-5 h-5 accent-primary cursor-pointer" />
                     </div>
-                    {isCompareMode && (
-                      <div className="aspect-square bg-secondary/30 rounded-2xl border-2 border-dashed border-border flex items-center justify-center relative overflow-hidden">
-                        {preview2 ? <img src={preview2} alt="P2" className="w-full h-full object-contain" /> : <ImageIcon className="opacity-20" size={40}/>}
-                        <label className="absolute inset-0 cursor-pointer"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 2)} accept="image/*" /></label>
+                    <div className={`grid ${isCompareMode ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+                      <div className="aspect-square bg-secondary/30 rounded-2xl border-2 border-dashed border-border flex items-center justify-center relative overflow-hidden group">
+                        {preview ? <img src={preview} alt="P1" className="w-full h-full object-contain" /> : <ImageIcon className="opacity-20" size={40}/>}
+                        <label className="absolute inset-0 cursor-pointer"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 1)} accept="image/*" /></label>
                       </div>
-                    )}
+                      {isCompareMode && (
+                        <div className="aspect-square bg-secondary/30 rounded-2xl border-2 border-dashed border-border flex items-center justify-center relative overflow-hidden">
+                          {preview2 ? <img src={preview2} alt="P2" className="w-full h-full object-contain" /> : <ImageIcon className="opacity-20" size={40}/>}
+                          <label className="absolute inset-0 cursor-pointer"><input type="file" className="hidden" onChange={(e) => handleFileChange(e, 2)} accept="image/*" /></label>
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={analyzeMood} disabled={isLoading || !file} className="w-full h-16 rounded-2xl bg-primary text-white font-black text-lg shadow-lg active:scale-95 transition-all flex items-center justify-center gap-3">
+                      {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={20}/>}
+                      {isLoading ? 'DNA SCANNING...' : '디자인 분석하기'}
+                    </button>
                   </div>
-                  <button onClick={analyzeMood} disabled={isLoading || !file} className="w-full h-16 rounded-2xl bg-primary text-white font-black text-lg shadow-lg hover:shadow-primary/30 transition-all flex items-center justify-center gap-3 active:scale-95">
-                    {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles size={20}/>}
-                    {isLoading ? 'DNA SCANNING...' : '디자인 분석하기'}
-                  </button>
-                </div>
+                )}
               </div>
             )}
           </div>
@@ -332,78 +408,162 @@ function App() {
           <div className="lg:col-span-7 space-y-8">
             {isLoading ? (
               <div className="h-full min-h-125 flex flex-col items-center justify-center space-y-8 py-20 text-center">
-                <div className="relative">
-                  {preview && <img src={preview} alt="Loading Preview" className="w-48 h-48 object-contain blur-2xl opacity-20 animate-pulse" />}
-                  <Loader2 className="absolute inset-0 m-auto w-12 h-12 animate-spin text-primary" />
-                </div>
-                <div className="text-center space-y-3">
-                  <h2 className="text-2xl font-black animate-shimmer">디자인 유전자를 해독하는 중입니다...</h2>
-                  <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-[0.2em]">Sequencing Visual DNA Pattern</p>
+                <div className="relative">{preview && <img src={preview} alt="L" className="w-48 h-48 object-contain blur-2xl opacity-20 animate-pulse" />}<Loader2 className="absolute inset-0 m-auto w-12 h-12 animate-spin text-primary" /></div>
+                <div className="text-center space-y-3"><h2 className="text-2xl font-black animate-shimmer">디자인 유전자를 해독하는 중입니다...</h2><p className="text-[10px] text-muted-foreground font-bold uppercase tracking-[0.2em]">Sequencing Visual DNA Pattern</p></div>
+              </div>
+            ) : isBatchMode && batchResult ? (
+              /*  폴더 분석(오디션) 결과 UI */
+              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-8">
+                <div className="bg-card rounded-3xl border-2 border-primary p-8 shadow-xl relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4 opacity-10"><Grid size={100}/></div>
+                  <h2 className="text-3xl font-black mb-4">마스터의 오디션 리포트</h2>
+                  
+                  <div className="space-y-6">
+                    <div className="p-5 bg-primary/5 rounded-2xl border border-primary/20 text-left">
+                      <h4 className="font-bold text-primary mb-2">🏆 우승 시안 리뷰</h4>
+                      <p className="text-sm leading-relaxed">{batchResult.master_report.winner_review}</p>
+                    </div>
+
+                    <div className="grid gap-3">
+                      {batchResult.ranking.map((item: any, idx: number) => {
+                        // 업로드했던 batchFiles에서 파일명이 일치하는 녀석을 찾아서 주소를 만들기
+                        const matchingFile = batchFiles ? Array.from(batchFiles).find(f => f.name === item.filename) : null;
+                        const imageUrl = matchingFile ? URL.createObjectURL(matchingFile) : null;
+
+                        return (
+                          <div key={idx} className="flex items-center gap-4 p-4 bg-secondary/30 rounded-2xl hover:bg-secondary/50 transition-all border border-border/50 group">
+                            {/* 1. 순위 표시 */}
+                            <span className={`font-black text-lg w-8 ${idx === 0 ? 'text-amber-500' : 'text-primary'}`}>
+                              {idx + 1}
+                            </span>
+
+                            {/* 2. 📸 이미지 썸네일*/}
+                            <div className="w-24 h-24 rounded-2xl overflow-hidden bg-muted border border-border shadow-md shrink-0">
+                              {imageUrl ? (
+                                <img src={imageUrl} alt={item.filename} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-muted-foreground"><ImageIcon size={24} /></div>
+                              )}
+                            </div>
+
+                            {/* 3. 파일 정보 */}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] font-bold truncate text-foreground/80">{item.filename}</p>
+                              <div className="flex gap-2 mt-1">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-bold">DNA Match</span>
+                              </div>
+                            </div>
+
+                            {/* 4. 점수 */}
+                            <div className="text-right">
+                              <span className={`text-xl font-mono font-black ${idx === 0 ? 'text-amber-500' : 'text-foreground'}`}>
+                                {item.score}<span className="text-[10px] ml-0.5 opacity-50">pt</span>
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                 </div>
               </div>
+            </div>
 
-               ) : isCompareMode && compResult ? (
-              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-6">
-                <div className="bg-card rounded-3xl border-2 border-primary p-8 shadow-xl relative overflow-hidden text-left">
-                  <div className="absolute top-0 right-0 p-4 opacity-10"><Scale size={100}/></div>
-                  <h2 className="text-3xl font-black mb-4 text-left">
-                    승자는 <span className="text-primary underline decoration-wavy">{compResult.comparison.winner}안</span> 입니다!
-                  </h2>
-                  <p className="text-lg font-medium text-primary mb-6 text-left">{compResult.comparison.summary}</p>
-                  <div className="grid gap-4 text-sm leading-relaxed">
-                    <div className="bg-secondary/30 p-5 rounded-2xl">
-                      <h4 className="font-bold text-foreground flex items-center gap-2 mb-2"><Activity size={16}/> 상세 비교 분석</h4>
-                      <p className="whitespace-pre-wrap opacity-80">{compResult.comparison.detail_comparison}</p>
-                    </div>
-                    <div className="bg-primary/5 border border-primary/10 p-5 rounded-2xl">
-                      <h4 className="font-bold text-primary flex items-center gap-2 mb-2"><Sparkles size={16}/> 선택 이유</h4>
-                      <p className="whitespace-pre-wrap text-primary/80">{compResult.comparison.reasoning}</p>
-                    </div>
-                  </div>
+            ) : isCompareMode && compResult ? (
+              /* ⚖️ 비교 결과창 (중괄호 짝궁 확인!) */
+              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-6 text-left">
+                <div className="bg-card rounded-4xl border-2 border-primary p-10 shadow-xl">
+                  <h2 className="text-3xl font-black mb-4">승자는 <span className="text-primary underline decoration-wavy">{compResult.comparison.winner}안</span> 입니다!</h2>
+                  <p className="text-lg font-medium text-primary mb-6">{compResult.comparison.summary}</p>
+                  <div className="grid gap-4"><div className="bg-secondary/30 p-5 rounded-2xl"><h4 className="font-bold text-foreground mb-2">상세 분석</h4><p className="text-sm opacity-80 whitespace-pre-wrap">{compResult.comparison.detail_comparison}</p></div></div>
                 </div>
               </div>
-
             ) : result ? (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-8">
-                <div className="bg-card rounded-3xl border border-border p-8 relative overflow-hidden shadow-sm">
-                  <div className="absolute top-0 left-0 w-2 h-full bg-linear-to-b from-primary to-purple-500" />
-                  <div className="flex items-center justify-between mb-10">
-                    <div className="flex items-center gap-4">
-                      <h2 className="text-xl font-bold flex items-center gap-2 text-primary"><Sparkles size={22}/> Master's Insight</h2>
-                      <span className="text-5xl font-black text-amber-500 tracking-tighter">{result.total_score}<span className="text-xl">점</span></span>
+
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-8 text-left pb-20">
+  
+              {/* [메인 인사이트 카드] - 옆선을 제거하고 패딩(p-10)을 늘려 시원하게 만듦 */}
+              <div className="bg-card rounded-[2.5rem] border border-border p-10 shadow-sm relative overflow-hidden">
+                
+                {/* 상단: 점수와 카테고리 (글자 크기 정돈) */}
+                <div className="flex items-end justify-between mb-12">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-widest opacity-70">
+                      <Sparkles size={14}/> Master's Insight
                     </div>
-                    <span className="px-4 py-1.5 rounded-full bg-secondary text-[10px] font-black uppercase tracking-widest">{result.category}</span>
+                    <h2 className="text-6xl font-black text-foreground tracking-tighter">
+                      {result.total_score}<span className="text-2xl ml-2 font-bold text-muted-foreground">/ 100</span>
+                    </h2>
                   </div>
-                  <div className="flex flex-wrap gap-2 mb-6">
-                    {Object.entries(result.evaluation).map(([key, value]) => (
-                      <span key={key} className="px-2 py-1 bg-secondary text-[9px] font-bold rounded-md border border-border">
-                        {key.toUpperCase()}: {value}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
-                    <CompetencyCard title="Brand Identity" desc={result.competency?.identity || "분석 대기 중..."} icon={Target} />
-                    <CompetencyCard title="Graphic Quality" desc={result.competency?.quality || "분석 대기 중..."} icon={Activity} />
-                    <CompetencyCard title="Technical Fidelity" desc={result.competency?.fidelity || "분석 대기 중..."} icon={Scale} />
-                  </div>
-                  {result.market_analysis && (
-                    <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl mb-6">
-                      <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-black text-amber-600 uppercase">Estimated Market Value (Beta)</span>
-                        <span className="text-lg font-black text-amber-600">
-                          ₩{result.market_analysis.estimated_value.toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-amber-600/70 mt-1">* 2026년 디자인 노임단가 및 작업 복잡도 기준</p>
-                    </div>
-                  )}
-                  <div className="space-y-8">
-                    <div className="space-y-3"><label className="text-[10px] font-black uppercase text-muted-foreground tracking-widest text-left block">Overall Mood</label><p className="text-lg font-medium leading-relaxed whitespace-pre-wrap text-left">{result.mood}</p></div>
-                    <div className="p-6 rounded-2xl bg-secondary/50 border border-border/50"><label className="text-[10px] font-black uppercase text-primary tracking-widest block mb-3 text-left">Strategic Advice</label><p className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap text-left">{result.advice}</p></div>
-                    <div className="space-y-4"><h4 className="text-sm font-black text-foreground flex items-center gap-2 text-left">📌 Action Checklist</h4><div className="grid gap-2">{result.action_checklist?.map((item, idx) => (<div key={idx} className="text-xs text-muted-foreground bg-background/50 p-3 rounded-xl flex gap-3 border border-border/40 text-left"><span className="text-primary font-bold">✅</span> {item}</div>))}</div></div>
-                  </div>
+                  <span className="px-5 py-2 rounded-xl bg-secondary text-[11px] font-black uppercase tracking-widest border border-border/50">
+                    {result.category}
+                  </span>
                 </div>
 
+                {/* 1. 5대 지표 평가 (작은 뱃지 대신 깔끔한 표 형태로) */}
+                <div className="flex flex-col gap-3 mb-12">
+                {Object.entries(result.evaluation).map(([key, value]) => (
+                  <div key={key} className="flex items-center gap-4 bg-secondary/30 p-4 rounded-2xl border border-border/40 transition-all hover:bg-secondary/50">
+                    {/* 상태 뱃지: 긍정적인 단어가 포함되면 GOOD, 아니면 CHECK 표시 */}
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase shrink-0 ${
+                      value.includes('적절') || value.includes('안정') || value.includes('우수') 
+                      ? 'bg-green-500/10 text-green-500' 
+                      : 'bg-primary/10 text-primary'
+                    }`}>
+                      {value.includes('적절') || value.includes('안정') || value.includes('우수') ? 'GOOD' : 'CHECK'}
+                    </span>
+
+                    {/* 지표명: 너비를 고정(w-24)하여 정렬 유지 */}
+                    <span className="text-[11px] font-black text-muted-foreground uppercase w-24 shrink-0">
+                      {key}
+                    </span>
+
+                    {/* 분석 내용: 줄간격을 조절(leading-relaxed)하여 가독성 향상 */}
+                    <span className="text-[13px] font-medium text-foreground leading-relaxed italic opacity-90">
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+                {/* 2. 3대 핵심 역량 (가운데 정렬 및 아이콘 배치) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
+                  <CompetencyCard title="Brand Identity" desc={result.competency?.identity} icon={Target} />
+                  <CompetencyCard title="Graphic Quality" desc={result.competency?.quality} icon={Activity} />
+                  <CompetencyCard title="Technical Fidelity" desc={result.competency?.fidelity} icon={Scale} />
+                </div>
+
+                {/* 3. 전문가의 심층 조언 (가독성 극대화 섹션) */}
+                <div className="space-y-12 border-t border-border/50 pt-10">
+                  <div className="space-y-4">
+                    <label className="text-[11px] font-black uppercase text-primary tracking-[0.2em] opacity-80">Overall Mood Analysis</label>
+                    <p className="text-3xl font-bold leading-tight text-foreground tracking-tight whitespace-pre-wrap italic">
+                      "{result.mood}"
+                    </p>
+                  </div>
+                  
+                  <div className="p-8 rounded-4xl bg-secondary/40 border border-border/60 shadow-inner">
+                    <label className="text-[11px] font-black uppercase text-primary tracking-[0.2em] block mb-5 text-left">Master's Strategic Advice</label>
+                    <p className="text-[17px] font-medium leading-relaxed text-foreground/90 break-keep">
+                      {result.advice}
+                    </p>
+                  </div>
+
+                  {/* 액션 체크리스트 */}
+                  <div className="space-y-5">
+                    <h4 className="text-[13px] font-black text-muted-foreground uppercase tracking-widest">Action Checklist</h4>
+                    <div className="grid gap-3">
+                      {result.action_checklist?.map((item, idx) => (
+                        <div key={idx} className="text-sm text-foreground/80 bg-background/40 p-4 rounded-2xl flex gap-4 border border-border/30 items-center">
+                          <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">✓</div>
+                          {item}
+                        </div>
+
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* --- 📊 차트 및 상세 결과 섹션 --- */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                   <div className="bg-card rounded-3xl border border-border p-6 flex items-center justify-center min-h-75">
                     <ResponsiveContainer width="100%" height={280}>
@@ -414,7 +574,7 @@ function App() {
                       </RadarChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="grid grid-cols-2 gap-4 text-left">
+                  <div className="grid grid-cols-2 gap-4">
                     <StatCard label="Brightness" value={result.brightness} max={255} color="bg-amber-400" icon={Sun} />
                     <StatCard label="Complexity" value={result.complexity} color="bg-blue-500" icon={Grid} />
                     <StatCard label="Saliency" value={result.saliency} color="bg-purple-500" icon={Activity} />
@@ -425,53 +585,95 @@ function App() {
                   </div>
                 </div>
 
-                {/* 컬러 DNA */}
+                {/* --- 🎨 컬러 DNA 섹션 --- */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="bg-card rounded-3xl border border-border p-6 shadow-sm">
                     <h3 className="text-[11px] font-black text-muted-foreground mb-4 uppercase tracking-widest flex items-center gap-2"><Palette size={14} /> Color DNA</h3>
-                    <div className="flex h-16 rounded-2xl overflow-hidden border border-border">{result.colors.map((c, i) => (<div key={i} className="flex-1 h-full cursor-pointer hover:flex-[1.5] transition-all" style={{backgroundColor: c}} onClick={() => {navigator.clipboard.writeText(c); alert('복사되었습니다!');}} />))}</div>
+                    <div className="flex h-16 rounded-2xl overflow-hidden border border-border">
+                      {result.colors.map((c, i) => (
+                        <div key={i} className="flex-1 h-full cursor-pointer hover:flex-[1.5] transition-all" style={{backgroundColor: c}} onClick={() => {navigator.clipboard.writeText(c); alert('복사되었습니다!');}} />
+                      ))}
+                    </div>
                   </div>
-                  <div className="bg-primary/5 rounded-3xl border border-primary/20 p-6 flex items-center justify-around">{result.suggested_palette?.map((color, idx) => (<div key={idx} className="flex flex-col items-center gap-2"><div className="w-10 h-10 rounded-full shadow-md border-2 border-white" style={{backgroundColor: color}} /><span className="text-[9px] font-mono opacity-50 uppercase">{color}</span></div>))}</div>
+                  <div className="bg-primary/5 rounded-3xl border border-primary/20 p-6 flex items-center justify-around">
+                    {result.suggested_palette?.map((color, idx) => (
+                      <div key={idx} className="flex flex-col items-center gap-2">
+                        <div className="w-10 h-10 rounded-full shadow-md border-2 border-white" style={{backgroundColor: color}} />
+                        <span className="text-[9px] font-mono opacity-50 uppercase">{color}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
+                {/* --- 스타일 벤치마킹 섹션 --- */}
                 <div className="space-y-8 pt-8 border-t border-border">
-                   <div className="space-y-1"><h3 className="text-2xl font-black tracking-tight text-foreground text-left">Style Benchmarking</h3><p className="text-sm text-muted-foreground text-left">완성도를 높이기 위한 시각적 레퍼런스 가이드</p></div>
-                   {result.reference_images && result.reference_images.length > 0 ? (
+                  <h3 className="text-2xl font-black tracking-tight">Style Benchmarking</h3>
+                  {result.reference_images && result.reference_images.length > 0 ? (
                     <div className="columns-2 md:columns-3 gap-4 space-y-4">
                       {result.reference_images.map((url, i) => (
                         <div key={i} className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all cursor-zoom-in hover:shadow-xl hover:-translate-y-1 duration-300" onClick={() => setSelectedImg(url)}>
                           <img src={url} alt={`Ref ${i}`} referrerPolicy="no-referrer" className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><button onClick={(e) => {e.stopPropagation(); window.open(url, '_blank')}} className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/40 hover:bg-white/40 transition-all"><ExternalLink size={20} /></button></div>
+                          
+                          {/* ExternalLink를 사용하는 호버 버튼 섹션 */}
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button onClick={(e) => {e.stopPropagation(); window.open(url, '_blank')}} className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/40 hover:bg-white/40 transition-all">
+                              <ExternalLink size={20} />
+                            </button>
+                          </div>
                         </div>
-
                       ))}
                     </div>
-                  ) : (<div className="h-40 flex flex-col items-center justify-center border-2 border-dashed border-border rounded-3xl bg-secondary/10"><ImageIcon className="opacity-20 mb-2" size={32} /><p className="text-xs text-muted-foreground font-medium">참고 이미지를 불러오지 못했습니다.</p></div>)}
-                </div>
+                  ) : (
+                    <div className="h-40 flex flex-col items-center justify-center border-2 border-dashed border-border rounded-3xl bg-secondary/10">
+                      <ImageIcon className="opacity-20 mb-2" size={32} />
+                      <p className="text-xs text-muted-foreground font-medium">참고 이미지를 불러오지 못했습니다.</p>
+                    </div>
+                  )}
+
+                  {/* App.tsx 파일 하단 핀터레스트 버튼 구역 */}
+                  <div className="flex justify-center pt-10 pb-6">
+                    <button 
+                      onClick={() => window.open(`https://www.pinterest.com/search/pins/?q=${encodeURIComponent(result.category + ' ' + result.design_keywords.join(' '))}`, '_blank')}
+                      className="group flex items-center gap-3 px-8 py-4 bg-[#E60023] hover:bg-[#ad0018] text-white rounded-full font-black text-sm shadow-lg shadow-red-900/20 transition-all hover:scale-105 active:scale-95"
+                    >
+                      {/* 핀터레스트 느낌이 나는 아이콘 배치 */}
+                      <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center text-[#E60023]">
+                        <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                          <path d="M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.965 1.406-5.965s-.359-.718-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.261 7.929-7.261 4.162 0 7.396 2.966 7.396 6.929 0 4.135-2.607 7.462-6.225 7.462-1.214 0-2.354-.63-2.746-1.37l-.748 2.853c-.271 1.031-1.002 2.324-1.492 3.121C10.587 23.83 11.288 24 12.017 24c6.622 0 11.988-5.367 11.988-11.987C24 5.367 18.639 0 12.017 0z"/>
+                        </svg>
+                      </div>
+                      <span className="tracking-tight">핀터레스트에서 {result.category} 영감 더 보기</span>
+                      <ExternalLink size={16} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  </div>
+
+                </div> {/* 1. 스타일 벤치마킹 닫기 */}
               </div>
             ) : (
+              /* ⚡ 기본 대기 화면 */
               <div className="h-full min-h-125 border-2 border-dashed border-border/50 rounded-[3rem] flex flex-col items-center justify-center text-muted-foreground bg-secondary/5">
                 <Zap size={40} className="opacity-10 mb-4 animate-pulse" />
-                <p className="font-bold text-lg">왼쪽에서 브랜드 무드를 설정하고 분석을 시작하세요.</p>
-                
+                <p className="font-bold text-lg text-center">브랜드 무드를 설정하고 분석을 시작하세요.</p>
               </div>
             )}
-          </div>
-        </div>
-       {/* --- 이미지 확대 모달 --- */}
-        {selectedImg && (
-          <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 animate-in fade-in duration-300" onClick={() => setSelectedImg(null)}>
-            <button className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors" onClick={() => setSelectedImg(null)}><Maximize size={32} className="rotate-45" /></button>
-            <img src={selectedImg} alt="Zoomed" className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300" />
-            <div className="absolute bottom-10 flex gap-4">
-                <button onClick={(e) => {e.stopPropagation(); window.open(selectedImg, '_blank');}} className="px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-bold rounded-full backdrop-blur-md transition-all">원본 이미지 보기</button>
+          </div> {/* 3. lg:col-span-7 (오른쪽 패널) 닫기 */}
+
+          {/* --- 🔍 이미지 확대 모달 --- */}
+          {selectedImg && (
+            <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setSelectedImg(null)}>
+              <button className="absolute top-6 right-6 text-white/50 hover:text-white" onClick={() => setSelectedImg(null)}>
+                <Maximize size={32} className="rotate-45" />
+              </button>
+              <img src={selectedImg} alt="Zoomed" className="max-w-full max-h-[90vh] object-contain rounded-lg animate-in zoom-in-95" />
+              <div className="absolute bottom-10">
+                <button onClick={(e) => {e.stopPropagation(); window.open(selectedImg, '_blank');}} className="px-6 py-2 bg-white/10 text-white text-sm font-bold rounded-full border border-white/20">원본 이미지 보기</button>
+              </div>
             </div>
-          </div>
-        )}
+            )}
+            </div> {/* 4. grid grid-cols-12 (메인 그리드) 닫기 */}
+          </main>
+        </div> /* 5. min-h-screen (최상위 루트) 닫기 */
+      );
+    }
 
-      </main>
-    </div>
-  );
-}
-
-export default App;
+    export default App;

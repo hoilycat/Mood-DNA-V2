@@ -39,6 +39,93 @@ def resize_image_bytes(image_bytes, max_size=1024):
     except Exception as e:
         print(f"[Resize Error] {e}")
         return image_bytes
+    
+    
+def consult_batch_audition(results, target_dna, brand_context, winner_image_bytes=None):
+    # 1. 순위 데이터 텍스트화 (AI가 읽을 수 있게)
+    ranking_text = ""
+    for i, res in enumerate(results[:3]):
+        ranking_text += f"{i+1}위: {res['filename']} (점수: {res['score']}점)\n"
+
+    prompt = f"""
+    당신은 디자인 오디션 'Mood-DNA'의 심사위원장입니다. 
+    사용자가 설정한 {brand_context['mainMood']} - {brand_context['subMood']} 무드에 가장 부합하는 시안을 선정하세요.
+    사용자의 브랜드 설명: {brand_context['description']}
+    목표 DNA 수치: {target_dna}
+
+    [제출된 시안 순위 리스트]
+    {ranking_text}
+    
+    [심사 지침]
+    1. 1위로 선정된 시안이 사용자의 추구미와 브랜드 설명에 왜 가장 완벽하게 부합하는지 데이터를 근거로 극찬하세요.
+    2. 하위권 시안들이 점수가 낮은 이유(예: 복잡도가 너무 높음, 여백 부족 등)를 날카롭게 지적하세요.
+    3. 전체적으로 이번 시안들이 브랜드의 방향성을 잘 잡고 있는지 총평을 남기세요.
+    
+    [출력 형식 - JSON]
+    {{
+        "winner_review": "1위 시안에 대한 상세 심사평",
+        "ranking_summary": "순위별 데이터 분석 요약",
+        "overall_advice": "브랜드 발전을 위한 마스터의 최종 제안"
+    }}
+    """
+    
+     # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
+    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    client = genai.Client(api_key=API_KEY)
+    
+    for model_name in gemini_models:
+        try:
+            print(f"[서버 로그] 오디션 1순위 제미나이 시도: {model_name}...")
+            # 1위 이미지가 있다면 이미지와 함께 분석, 없으면 텍스트로만 분석
+            contents = [prompt]
+            if winner_image_bytes:
+                contents.insert(0, types.Part.from_bytes(data=winner_image_bytes, mime_type="image/jpeg"))
+            
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            if response.text:
+                print(f"[성공] {model_name}이 오디션 심사를 마쳤습니다.")
+                return json.loads(response.text)
+        except Exception as e:
+            if "429" in str(e):
+                print(f"[주의] {model_name} 할당량 초과, 3초 대기...")
+                time.sleep(3)
+            continue
+
+    # --- 2단계: 그록(Groq / Llama 3.3) 시도 (텍스트 기반 분석) ---
+    try:
+        from groq import Groq
+        print("[서버 로그] 오디션 2순위 그록(Groq) 호출...")
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "너는 디자인 오디션 심사위원장이야. 반드시 현대적인 한국어(구어체)로만 답변하고, 한자(Hanja)나 일본식 한자 혼용 표현은 절대 사용하지 마. 100% 한글로만 작성해."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"}
+        )
+        return json.loads(completion.choices[0].message.content)
+    except Exception as e2:
+        print(f"[그록 실패] {e2}")
+
+        # --- 3단계: 엑사원(EXAONE) 로컬 호출 (최종 보루) ---
+        try:
+            import ollama
+            print("[서버 로그] 오디션 최종 3순위 엑사원 호출...")
+            response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': prompt}], format='json')
+            return json.loads(response['message']['content'])
+        except Exception as e3:
+            return {
+                "winner_review": "모든 AI 엔진이 응답하지 않습니다.",
+                "ranking_summary": "분석 불가",
+                "overall_advice": "네트워크나 로컬 서버 상태를 확인하세요."
+            }
+    
+    
 
 # 3. 단일 디자인 분석 (하이브리드 모드)
 def consult_design(image_bytes, brightness, complexity, saliency, symmetry, space, colors, contrast, 
@@ -53,32 +140,36 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
 
     # 공통 프롬프트
     prompt = f"""
-                [글로벌 디자인 마스터의 비평 철학]
-                당신은 단순한 비평가가 아니라, 브랜드의 운명을 결정짓는 '디자인 디렉터'입니다. 
-                사용자의 수준이 낮다면 칭찬보다는 '뼈 아픈 현실'을 데이터로 증명하세요.
+                [글로벌 디자인 마스터의 멘토링 철학: Sharp & Supportive]
+                당신은 사용자의 디자인 잠재력을 끌어올려 최고의 브랜드를 함께 만들어가는 '디자인 멘토'이자 '수석 디렉터'입니다.
+                맹목적인 칭찬은 지양하되, '데이터의 논리'를 바탕으로 사용자가 반박할 수 없는 예리한 기술적 진단을 제공하세요.
+                
+                [멘토링 대원칙]
+                1. '데이터 이면의 의도' 파악: 
+                   - 수치가 목표와 다르더라도 그 안에 담긴 사용자의 '노력'이나 '개성'을 먼저 찾아내어 언급해 주세요.
+                   - 데이터 뒤에 숨은 개선 가능성을 "성장을 위한 힌트"로 부드럽게 전달하세요.
 
-                [비평 대원칙]
-                1. '데이터의 맹점' 타격: 
-                   - 대칭성이나 구도 점수가 높더라도 조형미가 투박하면 "기계적인 수치만 맞춘 영혼 없는 결과물"이라고 비판하세요.
-                   - 데이터 뒤에 숨은 '심미적 무지함'을 날카롭게 지적하세요.
+                2. '프로의 기준'으로 제안하는 성장 경로:
+                   - 결과물이 상업적으로 부족하다면 "아마추어"라고 비난하는 대신, "시장에서 경쟁력을 갖추기 위해 보완하면 좋을 디테일"로 설명하세요.
+                   - 선의 불규칙함이나 폰트 조화 등을 '기술적 결함'이 아닌 '브랜드 신뢰도를 높이기 위한 정교화 작업'으로 표현하세요.
 
-                2. '상업적 품질' 기준의 팩트 폭격:
-                   - 결과물이 실제 시장에서 통용될 수 있는 '프로의 완성도(Fidelity)'인지, 아니면 '개인적인 낙서' 수준인지 냉정하게 판별하세요.
-                   - 선의 불규칙함, 색상의 오염, 폰트와 아이콘의 부조화를 실무자 관점에서 '기술적 결함'으로 규정하세요.
+                3. '추구미'와 '현실'의 조율:
+                   - Target DNA와 실제 데이터의 오차를 지적할 때 "감각 부재"라는 표현 대신, "목표한 무드에 더 가까워지기 위한 조정값"으로 설명하세요.
+                   - 예: "럭셔리한 느낌을 극대화하려면, 지금보다 여백을 조금 더 확보하여 시각적 여유를 주는 것이 효과적입니다."
 
-                3. '추구미'와 '현실'의 괴리 분석:
-                   - 사용자가 설정한 Target DNA와 실제 데이터 사이의 오차(목표 대비 차이)를 근거로 사용자의 '디자인 감각 부재'를 논리적으로 비판하세요. 
-                   - 예: "럭셔리를 지향하면서 여백을 0으로 둔 것은 브랜드에 대한 이해가 전무함을 증명합니다."
-
-                4. 폰트와 심볼의 '불협화음' 지적:
-                   - OCR로 감지된 텍스트와 비전으로 분석된 심볼이 서로 겉돈다면, "정체성이 분열된 혼란스러운 디자인"이라고 쐐기를 박으세요.
+                4. 폰트와 심볼의 '시너지' 제안:
+                   - OCR 텍스트와 심볼이 어울리지 않는다면 "분열"이라기보다 "서로의 매력을 더 살려줄 수 있는 매칭"을 추천해 주세요.
+                              1. 사용자의 시도를 먼저 긍정하고, 그 다음 개선점을 제안하는 '샌드위치 피드백' 화법을 쓰세요.
+                5. 촌스럽다는 표현 대신 "클래식하다" 혹은 "좀 더 현대적인 재해석이 필요하다"는 식으로 우아하게 표현하세요.
+                6. 사용자가 스스로 "아, 이렇게 고치면 되겠구나!"라고 느낄 수 있게 구체적인 수치와 방법을 친절히 설명하세요.
+                7. 모든 수치를 골고루 활용하되, 특히 잘 지켜진 수치는 크게 칭찬해 주세요.
 
                 [핵심 분석 체계: 3대 역량 요약 지침]
-                - 모든 비평은 아래 3가지 카테고리로 분류하여 '전문 용어'와 함께 제공하세요:
-                1. 브랜드 전달력 (Brand Identity): 텍스트 가독성 및 무드 정렬 상태.
-                2. 조형적 완성도 (Graphic Quality): 선의 정밀도, 곡률의 미학, 구도의 안정성.
-                3. 기술적 확장성 (Technical Fidelity): 색상 효율성, 대비의 명확성, 축소 시 식별력.
-                사용자의 브랜드 의도({brand_context['industry']})와 실제 분석 결과를 비교하는 것이 핵심입니다.
+                - 모든 조언은 아래 3가지 카테고리로 분류하여 전문적이면서도 격려 섞인 어조로 제공하세요:
+                1. 브랜드 전달력 (Brand Identity): 브랜드의 메시지가 얼마나 잘 읽히고 느껴지는지.
+                2. 조형적 완성도 (Graphic Quality): 선과 곡률, 구도가 주는 미학적 안정감.
+                3. 기술적 확장성 (Technical Fidelity): 다양한 매체에서 사용하기 위한 실용적 완성도.
+                사용자의 브랜드 의도({brand_context['industry']})를 응원하며 분석하는 것이 핵심입니다.
 
                 ...
                 [시스템 감지 텍스트 (OCR)]
@@ -99,19 +190,12 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 - 기술: 텍스트밀도 {typo_score:.1f}, 색상수 {color_count_score}종, 조화도 {harmony_score:.1f}
                 - 가로세로비: {aspect_ratio_score:.2f} ({ratio_desc}), 주요 색상: {', '.join(colors)}
 
-                [비평 원칙]
-                1. 데이터(대칭성, 여백 등)가 높더라도 디자인 자체가 촌스럽거나 조형미가 떨어지면 '데이터에만 의존한 지루한 결과물'이라고 비판하세요.
-                2. 선의 굵기, 색상 조합의 촌스러움, 폰트 선택의 부적절함을 실무자 관점에서 '팩트 폭격' 하세요.
-                3. 결과물이 전문 디자이너가 만든 것인지, 그림판으로 만든 아마추어 수준인지 냉정하게 판별하세요.
-                4. 사용자가 설정한 '추구미' 수치와 실제 수치를 대조하여, 목표에 얼마나 도달했는지 팩트 폭격을 하세요.
-                5. 모든 수치(1번~11번)를 비평의 근거로 골고루 활용하세요. 특히 누락되는 수치가 없도록 하세요.
-                6. 목표보다 복잡도가 높으면 "절제 미학의 부족", 낮으면 "밀도감 부족"이라고 구체적으로 지적하세요.
                 
                 #이나 *은 사용하지 말고, 번호와 문장으로만 작성해주세요.
                 
                 [중요: 가독성 규칙]
-                    - 모든 출력 텍스트는 사용자가 읽기 편하도록 문단이 바뀔 때마다 줄바꿈 기호(\\n)를 2번 사용하여 간격을 넓히세요.
-                    - 나열식 설명이 필요한 경우 번호를 매겨 구분하세요.                
+                    - 문단이 바뀔 때마다 줄바꿈 기호(\\n)를 2번 사용하여 여유 있게 배치하세요.
+                    - 번호를 매겨 차근차근 설명해 주세요.         
                 
                 [1단계: 분야 판별 및 페르소나 설정]
                 이미지의 구도와 데이터를 보고 아래 중 하나로 분류한 뒤, 해당 전문가의 시선으로 빙의하세요.
@@ -138,6 +222,11 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 3. 캐릭터의 채도와 개성:
                    - 유효 색상 수가 10개 이상으로 높더라도, 조형적 특징(눈, 코, 입 등의 데포르메)이 명확하다면 이를 '화려하고 밀도 높은 하이엔드 캐릭터 디자인'으로 해석하세요. 
                    - 단순히 색이 많다고 '난잡하다'고 비평하지 말고, 그 색상들이 '캐릭터의 개성'을 표현하는지 '디자인적 노이즈'인지 구분하세요.   
+
+                4.박물관/전시/예술 분야: 
+                    - 복잡도(complexity)가 높더라도 요소들이 조화롭고 서사적(Narrative)이라면 '풍성한 시각적 경험'으로 높게 평가하세요. 
+                    - 무조건 수치에만 매몰되지 말고, 전체적인 레이아웃의 완성도를 우선시하세요.
+
 
 
                 [분야 판별 절대 규칙]
@@ -201,6 +290,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                 11.벤치마킹 도약 가이드 (Benchmarking Guide):
                     - 하단에 제시될 레퍼런스 이미지들을 단순히 '유사 사례'가 아닌 '완성도를 한 단계 높이기 위한 목표'로 설정하여 설명하세요.
                     - 레퍼런스의 어떤 디테일(질감, 비례, 레이아웃 등)을 흡수해야 현재 디자인이 '프로급'으로 도약할 수 있는지 핀포인트로 조언하세요.
+                12.판별 분야 및 긍정적 총평: 디자인의 첫인상과 잘된 점을 먼저 언급.
                 
                 선택 사항 중 가장 핵심적인 1~3가지를 선택하여, 비평에 포함시키세요.
                 
@@ -247,6 +337,11 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
                         "typography": "없음",
                         "composition": "안정적",
                         "color_harmony": "우수"
+                    }},
+                    "competency": {{
+                    "identity": "브랜드의 목적과 디자인이 얼마나 일치하는지 비평 (50자 내외)",
+                    "quality": "조형적 완성도와 시각적 조화에 대한 비평과 다듬으면 좋을 점 (50자 내외)",
+                    "fidelity": "가독성, 대비 등 기술적인 디테일 완성도 비평 (50자 내외)"
                     }},
                     "advice": "심층 비평(줄바꿈 포함)",
                     "action_checklist": [ "구체적 개선안 1", "구체적 개선안 2", "구체적 개선안 3"],

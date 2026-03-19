@@ -19,7 +19,7 @@ def analyze_text_with_ocr(image_bytes):
     results = reader.readtext(img)
     
     if not results:
-        return {"has_text": False, "text_content": "", "text_area_ratio": 0.0}
+        return {"has_text": False, "text_content": "", "text_area_ratio": 0.0, "raw_results": []}
 
     full_text = []
     total_text_area = 0
@@ -34,10 +34,11 @@ def analyze_text_with_ocr(image_bytes):
             total_text_area += (width * height)
 
     return {
-        "has_text": True,
+        "has_text": len(full_text) > 0,
         "text_content": " / ".join(full_text),
         "text_count": len(full_text),
-        "text_area_ratio": round((total_text_area / img_area) * 100, 2)
+        "text_area_ratio": round((total_text_area / img_area) * 100, 2),
+        "raw_results": results
     }
     
     
@@ -111,15 +112,15 @@ def calculate_complexity(image_bytes):
     if img is None: return 0.0
     # 로고면 BGRA, 일반이면 BGR을 Gray로 변환
     gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY if is_logo_mode else cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 100, 200)
+    edges = cv2.Canny(gray, 150, 250)
     
     if is_logo_mode:
         mask = img[:, :, 3] > 0
         area = np.count_nonzero(mask)
         # 내용물 영역 안에서만 엣지 밀도 계산
-        score = (np.count_nonzero(edges & mask) / area) * 1500 if area > 0 else 0.0
+        score = (np.count_nonzero(edges & mask) / area) * 400 if area > 0 else 0.0
     else:
-        score = (np.count_nonzero(edges) / edges.size) * 1000
+        score = (np.count_nonzero(edges) / edges.size) * 300
         
     return min(float(score), 100.0)
 
