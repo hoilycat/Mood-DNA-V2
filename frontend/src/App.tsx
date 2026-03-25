@@ -165,11 +165,25 @@ function App() {
   const [batchFiles, setBatchFiles] = useState<FileList | null>(null);
   const [batchResult, setBatchResult] = useState<any>(null);
   const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchPreviews, setBatchPreviews] = useState<Record<string, string>>({});
 
   // 2. 파일 핸들러 수정
-  const handleBatchFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleBatchFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
+      const files = Array.from(e.target.files);
       setBatchFiles(e.target.files);
+
+      // 1. 기존에 만들어둔 URL들을 메모리에서 해제 (청소)
+      Object.values(batchPreviews).forEach(URL.revokeObjectURL);
+
+      // 2. 새 파일들에 대한 URL 매핑 생성
+      const newPreviews: Record<string, string> = {};
+      files.forEach(file => {
+        newPreviews[file.name] = URL.createObjectURL(file);
+      });
+
+      // 3. 상태에 저장
+      setBatchPreviews(newPreviews);
     }
   };
 
@@ -261,6 +275,8 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
+
+
 
 return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary">
@@ -426,9 +442,7 @@ return (
 
                     <div className="grid gap-3">
                       {batchResult.ranking.map((item: any, idx: number) => {
-                        // 업로드했던 batchFiles에서 파일명이 일치하는 녀석을 찾아서 주소를 만들기
-                        const matchingFile = batchFiles ? Array.from(batchFiles).find(f => f.name === item.filename) : null;
-                        const imageUrl = matchingFile ? URL.createObjectURL(matchingFile) : null;
+                        const imageUrl = batchPreviews[item.filename];
 
                         return (
                           <div key={idx} className="flex items-center gap-4 p-4 bg-secondary/30 rounded-2xl hover:bg-secondary/50 transition-all border border-border/50 group">
@@ -437,12 +451,18 @@ return (
                               {idx + 1}
                             </span>
 
-                            {/* 2. 📸 이미지 썸네일*/}
+                            {/* 2. 📸 이미지 썸네일 */}
                             <div className="w-24 h-24 rounded-2xl overflow-hidden bg-muted border border-border shadow-md shrink-0">
                               {imageUrl ? (
-                                <img src={imageUrl} alt={item.filename} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                                <img 
+                                  src={imageUrl} 
+                                  alt={item.filename} 
+                                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                                />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-muted-foreground"><ImageIcon size={24} /></div>
+                                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                                  <ImageIcon size={24} />
+                                </div>
                               )}
                             </div>
 
