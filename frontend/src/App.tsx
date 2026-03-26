@@ -66,10 +66,80 @@ const industries = [
   "카페 / 베이커리", 
   "의료 / 제약", 
   "하이엔드 패션 / 명품", 
-  "영화 / 엔터테인먼트",  // 추가됨
-  "박물관 / 예술 전시",    // 추가됨
+  "영화 / 엔터테인먼트", 
+  "박물관 / 예술 전시",    
   "기타 (직접 입력)"
 ];
+
+
+// 단어별 표준 DNA 정의
+const VIBE_KEYWORDS = {
+  '#따뜻한': { brightness: 80, complexity: 30, saliency: 40, symmetry: 50, space: 75 },
+  '#차가운': { brightness: 30, complexity: 40, saliency: 60, symmetry: 80, space: 50 },
+  '#힙한': { brightness: 40, complexity: 85, saliency: 90, symmetry: 30, space: 25 },
+  '#깔끔한': { brightness: 70, complexity: 15, saliency: 30, symmetry: 90, space: 90 },
+  '#화려한': { brightness: 60, complexity: 95, saliency: 85, symmetry: 50, space: 20 },
+  '#절제된': { brightness: 50, complexity: 10, saliency: 20, symmetry: 95, space: 95 },
+  '#강렬한': { brightness: 45, complexity: 75, saliency: 95, symmetry: 40, space: 30 },
+  '#친근한': { brightness: 85, complexity: 40, saliency: 45, symmetry: 55, space: 60 },
+  '#미래적인': { brightness: 50, complexity: 70, saliency: 80, symmetry: 60, space: 40 },
+  '#고전적인': { brightness: 40, complexity: 60, saliency: 50, symmetry: 85, space: 55 },
+};
+
+
+// App.tsx 상단 (VIBE_KEYWORDS 아래에 배치)
+const blendDNA = (baseDNA: any, selectedTags: string[]) => {
+  if (selectedTags.length === 0) return baseDNA;
+
+  const vibeSum = selectedTags.reduce((acc, tag) => {
+    const v = VIBE_KEYWORDS[tag as keyof typeof VIBE_KEYWORDS];
+    return {
+      brightness: acc.brightness + v.brightness,
+      complexity: acc.complexity + v.complexity,
+      saliency: acc.saliency + v.saliency,
+      symmetry: acc.symmetry + v.symmetry,
+      space: acc.space + v.space,
+    };
+  }, { brightness: 0, complexity: 0, saliency: 0, symmetry: 0, space: 0 });
+
+  const tagCount = selectedTags.length;
+  const avgVibe = {
+    brightness: vibeSum.brightness / tagCount,
+    complexity: vibeSum.complexity / tagCount,
+    saliency: vibeSum.saliency / tagCount,
+    symmetry: vibeSum.symmetry / tagCount,
+    space: vibeSum.space / tagCount,
+  };
+
+  // 업종(60%) + 감성(40%)
+  return {
+    brightness: Math.round(baseDNA.brightness * 0.6 + avgVibe.brightness * 0.4),
+    complexity: Math.round(baseDNA.complexity * 0.6 + avgVibe.complexity * 0.4),
+    saliency: Math.round(baseDNA.saliency * 0.6 + avgVibe.saliency * 0.4),
+    symmetry: Math.round(baseDNA.symmetry * 0.6 + avgVibe.symmetry * 0.4),
+    space: Math.round(baseDNA.space * 0.6 + avgVibe.space * 0.4),
+  };
+};
+
+// 문장에서 사전에 정의된 키워드들을 찾아내는 함수
+const extractKeywords = (text: string) => {
+  const found: string[] = [];
+  const allKeywords = Object.keys(VIBE_KEYWORDS);
+  
+  allKeywords.forEach(keyword => {
+    // #이 있든 없든 감지하도록 정규식 생성 (예: #힙한 or 힙한)
+    const cleanKeyword = keyword.replace('#', '');
+    const regex = new RegExp(cleanKeyword, 'g');
+    
+    if (regex.test(text)) {
+      found.push(keyword);
+    }
+  });
+  
+  return found;
+};
+
+
 
 // 타입 정의를 위해 DB를 상수로 관리
 const MOOD_DATABASE = {
@@ -138,6 +208,24 @@ const MOOD_DATABASE = {
 };
 
 function App() {
+
+
+  // [핵심] 브랜드 설명 변경 핸들러
+  const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setContext(prev => ({ ...prev, description: text }));
+
+    // 실시간 DNA 업데이트 로직
+    const detectedTags = extractKeywords(text);
+    const combinedTags = Array.from(new Set([...selectedTags, ...detectedTags]));
+    
+    // 현재 선택된 업종의 기본 DNA 가져와서 섞기
+    const baseDNA = (MOOD_DATABASE as any)[context.mainMood][context.subMood];
+    const blended = blendDNA(baseDNA, combinedTags);
+    setTargets(blended);
+  };
+
+
   // --- 3. 상태 관리 (타입 안전하게 설정) ---
   const [step, setStep] = useState(1);
   const [context, setContext] = useState({ 
@@ -196,11 +284,33 @@ function App() {
     setStep(2); 
   };
 
+    // 1. 업종 선택 시: 태그 초기화 및 기본값 세팅
   const handleSubMoodSelect = (subMood: string) => {
+    const baseDNA = (MOOD_DATABASE as any)[context.mainMood][subMood];
     setContext({ ...context, subMood: subMood });
-    setTargets((MOOD_DATABASE as any)[context.mainMood][subMood]);
-    setStep(3); 
+    setSelectedTags([]); // 업종이 바뀌면 태그는 일단 초기화 (혹은 유지하고 싶으면 이 줄 삭제)
+    setTargets(baseDNA); 
+    // 바로 Step 3로 안 가고, 태그를 고를 기회를 주기 위해 Step 2에 머물게 할 수도 있어!
   };
+
+  // 2. 태그 선택 시: 현재 업종 DNA와 섞기
+  const toggleTag = (tag: string) => {
+    let newTags;
+    if (selectedTags.includes(tag)) {
+      newTags = selectedTags.filter(t => t !== tag);
+    } else {
+      if (selectedTags.length >= 3) return;
+      newTags = [...selectedTags, tag];
+    }
+    setSelectedTags(newTags);
+    
+    // 현재 선택된 업종의 기본 DNA 가져오기
+    const baseDNA = (MOOD_DATABASE as any)[context.mainMood][context.subMood];
+    // 섞기!
+    const blended = blendDNA(baseDNA, newTags);
+    setTargets(blended);
+  };
+
 
   const getChartData = (res: MoodDnaResult) => [
     { subject: '밝기', A: (res.brightness / 255) * 100 },
@@ -277,6 +387,10 @@ function App() {
   }, [isDark]);
 
 
+// App.tsx 내부 Step 2 영역 수정
+const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+
 
 return (
     <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary">
@@ -312,72 +426,158 @@ return (
             )}
             {step === 2 && (
               <div className="bg-card rounded-3xl border border-border p-8 shadow-sm space-y-8 animate-in slide-in-from-right-4">
-                <div className="flex items-center justify-between"><button onClick={() => setStep(1)} className="text-xs font-bold text-muted-foreground hover:text-primary">← 뒤로가기</button><span className="text-primary font-bold text-xs uppercase tracking-widest">Step 02</span></div>
-                <h2 className="text-3xl font-black leading-tight">더 구체적인<br/><span className="text-primary">분야</span>를 알려주세요.</h2>
-                <div className="flex flex-wrap gap-2">
-                  {Object.keys(MOOD_DATABASE[context.mainMood]).map((sub) => (
-                    <button key={sub} onClick={() => handleSubMoodSelect(sub)} className="px-6 py-4 rounded-2xl bg-secondary font-black text-sm hover:ring-2 hover:ring-primary transition-all border border-border text-left w-full"># {sub.replace('_', ' ')}</button>
-                  ))}
+                <div className="flex items-center justify-between">
+                  <button onClick={() => setStep(1)} className="text-xs font-bold text-muted-foreground hover:text-primary">← 뒤로가기</button>
+                  <span className="text-primary font-bold text-xs uppercase tracking-widest">Step 02</span>
                 </div>
+                
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-black">1. 메인 <span className="text-primary">분야</span> 선택</h2>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.keys(MOOD_DATABASE[context.mainMood]).map((sub) => (
+                        <button 
+                          key={sub} 
+                          onClick={() => handleSubMoodSelect(sub)} 
+                          className={`px-4 py-3 rounded-xl font-bold text-xs transition-all border ${
+                            context.subMood === sub ? 'bg-primary text-white border-primary' : 'bg-secondary border-border'
+                          }`}
+                        >
+                          {sub.replace('_', ' ')}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-4 border-t border-border">
+                    <div className="flex justify-between items-end">
+                      <h2 className="text-2xl font-black">2. <span className="text-primary">분위기</span> 한 스푼</h2>
+                      <span className="text-[10px] text-muted-foreground font-bold">{selectedTags.length}/3 선택</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.keys(VIBE_KEYWORDS).map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => toggleTag(tag)}
+                          className={`px-3 py-2 rounded-full font-bold text-[11px] transition-all border ${
+                            selectedTags.includes(tag) 
+                              ? 'bg-primary/20 text-primary border-primary' 
+                              : 'bg-background border-border hover:border-primary/50'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setStep(3)} 
+                  className="w-full py-5 bg-foreground text-background rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-95 transition-all"
+                >
+                  DNA 세팅 완료 →
+                </button>
               </div>
             )}
 
             {step === 3 && (
               <div className="space-y-6 animate-in zoom-in-95">
+                {/* 1. 브랜드 정보 카드 (산업군 + 설명) */}
                 <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6">
-                  <div className="flex justify-between items-center border-b border-border pb-4"><div className="flex items-center gap-2 text-primary font-bold text-sm"><Sparkles size={18}/> 1. 브랜드 정보</div><button onClick={() => setStep(1)} className="text-[10px] font-bold text-muted-foreground underline">다시 설정</button></div>
-                                 
-                  {/* 3-1. 설정 요약 & 설명 입력 구역 내부 */}
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">산업군 선택</label>
-                    
-                    <select 
-                      className="w-full bg-secondary p-2.5 rounded-xl text-sm border-none focus:ring-2 focus:ring-primary transition-all" 
-                      value={industries.includes(context.industry) ? context.industry : "기타 (직접 입력)"} 
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val !== "기타 (직접 입력)") {
-                          setContext({...context, industry: val});
-                        } else {
-                          setContext({...context, industry: ""}); // 기타 선택 시 일단 비움
-                        }
-                      }}
-                    >
-                      {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
-                    </select>
-
-                    {/* [핵심] 기타를 선택했거나 리스트에 없는 값을 입력 중일 때 나타나는 입력창 */}
-                    {(!industries.includes(context.industry) || context.industry === "") && (
-                      <div className="animate-in slide-in-from-top-2 duration-300">
-                        <input 
-                          type="text"
-                          placeholder="분야를 직접 입력하세요 (예: 사이버펑크 영화)"
-                          className="w-full bg-primary/5 border border-primary/20 p-3 rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
-                          value={context.industry}
-                          onChange={(e) => setContext({...context, industry: e.target.value})}
-                          autoFocus
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                <div className="p-6 bg-secondary/30 rounded-3xl border border-border space-y-6">
-                  <h3 className="text-[10px] font-black uppercase text-primary flex items-center gap-2"><Target size={14}/> 2. Target DNA Fine-Tuning</h3>
-                  <div className="grid grid-cols-1 gap-5 px-4 max-w-[95%] mx-auto">
-                    {Object.keys(targets).map((key) => {
-                      const labels: any = { brightness: ["Dark", "Bright"], complexity: ["Simple", "Complex"], saliency: ["Soft", "Sharp"], symmetry: ["Organic", "Formal"], space: ["Dense", "Airy"] };
-                      if (['saturation', 'contrast', 'color_range'].includes(key)) return null;
-                      return (
-                        <div key={key} className="space-y-2">
-                          <div className="flex justify-between items-center"><span className="text-[9px] font-black uppercase text-muted-foreground/80">{key}</span><span className="text-[10px] font-mono font-bold text-primary">{(targets as any)[key]}</span></div>
-                          <div className="flex items-center gap-3"><span className="text-[8px] font-bold text-muted-foreground/30 w-7">{labels[key]?.[0]}</span><input type="range" min="0" max="100" value={(targets as any)[key]} onChange={(e) => setTargets({...targets, [key]: parseInt(e.target.value)})} className="flex-1 h-1 bg-background rounded-lg appearance-none cursor-pointer accent-primary" /><span className="text-[8px] font-bold text-muted-foreground/30 w-7 text-right">{labels[key]?.[1]}</span></div>
+                      <div className="flex justify-between items-center border-b border-border pb-4">
+                        <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                          <Sparkles size={18}/> 1. 브랜드 정보
                         </div>
-                      )
-                    })}
-                  </div>
-                </div>
+                        <button onClick={() => setStep(1)} className="text-[10px] font-bold text-muted-foreground underline">
+                          다시 설정
+                        </button>
+                      </div>
+                                    
+                      {/* 3-1. 산업군 선택 */}
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">산업군 선택</label>
+                        <select 
+                          className="w-full bg-secondary p-2.5 rounded-xl text-sm border-none focus:ring-2 focus:ring-primary transition-all outline-none" 
+                          value={industries.includes(context.industry) ? context.industry : "기타 (직접 입력)"} 
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val !== "기타 (직접 입력)") {
+                              setContext({...context, industry: val});
+                            } else {
+                              setContext({...context, industry: ""}); 
+                            }
+                          }}
+                        >
+                          {industries.map(ind => <option key={ind} value={ind}>{ind}</option>)}
+                        </select>
+
+                        {(!industries.includes(context.industry) || context.industry === "") && (
+                          <div className="animate-in slide-in-from-top-2 duration-300">
+                            <input 
+                              type="text"
+                              placeholder="분야를 직접 입력하세요"
+                              className="w-full bg-primary/5 border border-primary/20 p-3 rounded-xl text-sm focus:ring-2 focus:ring-primary outline-none"
+                              value={context.industry}
+                              onChange={(e) => setContext({...context, industry: e.target.value})}
+                              autoFocus
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3-2. [추가된 부분] 브랜드 핵심 가치 및 설명 입력 구역 */}
+                      <div className="space-y-3 pt-4 border-t border-border/50">
+                        <div className="flex justify-between items-end">
+                          <label className="text-[10px] font-black uppercase text-muted-foreground ml-1">브랜드 핵심 가치 및 설명</label>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                            <span className="text-[9px] text-primary font-bold uppercase tracking-tighter">DNA AI 분석 활성화</span>
+                          </div>
+                        </div>
+                        
+                        <textarea 
+                          placeholder="어떤 브랜드를 만들고 싶나요? 키워드를 포함하면 DNA가 자동으로 반응합니다. (예: 힙하면서도 깔끔한 테크 기업)"
+                          className="w-full h-32 bg-secondary/50 border border-border p-4 rounded-2xl text-sm focus:ring-2 focus:ring-primary outline-none transition-all resize-none font-medium leading-relaxed"
+                          value={context.description}
+                          onChange={handleDescriptionChange}
+                        />
+                        
+                        {/* 실시간 감지된 키워드 뱃지 */}
+                        <div className="flex flex-wrap gap-2 min-h-6">
+                          {extractKeywords(context.description).map(tag => (
+                            <span key={tag} className="text-[10px] px-2 py-1 bg-primary/10 text-primary border border-primary/20 rounded-lg font-black animate-in slide-in-from-top-1">
+                              ✨ {tag} 감지됨
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Target DNA Fine-Tuning 카드 (이건 기존 코드 그대로 유지) */}
+                    <div className="p-6 bg-secondary/30 rounded-3xl border border-border space-y-6">
+                      <h3 className="text-[10px] font-black uppercase text-primary flex items-center gap-2"><Target size={14}/> 2. Target DNA Fine-Tuning</h3>
+                      <div className="grid grid-cols-1 gap-5 px-4 max-w-[95%] mx-auto">
+                        {Object.keys(targets).map((key) => {
+                          const labels: any = { brightness: ["Dark", "Bright"], complexity: ["Simple", "Complex"], saliency: ["Soft", "Sharp"], symmetry: ["Organic", "Formal"], space: ["Dense", "Airy"] };
+                          if (['saturation', 'contrast', 'color_range', 'roundness', 'straightness', 'smoothness'].includes(key)) return null;
+                          return (
+                            <div key={key} className="space-y-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[9px] font-black uppercase text-muted-foreground/80">{key}</span>
+                                <span className="text-[10px] font-mono font-bold text-primary">{(targets as any)[key]}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-[8px] font-bold text-muted-foreground/30 w-7">{labels[key]?.[0]}</span>
+                                <input type="range" min="0" max="100" value={(targets as any)[key]} onChange={(e) => setTargets({...targets, [key]: parseInt(e.target.value)})} className="flex-1 h-1 bg-background rounded-lg appearance-none cursor-pointer accent-primary" />
+                                <span className="text-[8px] font-bold text-muted-foreground/30 w-7 text-right">{labels[key]?.[1]}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
                 {/* 조건부 업로드 섹션 */}
                 {isBatchMode ? (
                   <div className="bg-card rounded-3xl border border-border p-6 shadow-sm space-y-6 animate-in fade-in">
@@ -630,19 +830,39 @@ return (
                   <h3 className="text-2xl font-black tracking-tight">Style Benchmarking</h3>
                   {result.reference_images && result.reference_images.length > 0 ? (
                     <div className="columns-2 md:columns-3 gap-4 space-y-4">
-                      {result.reference_images.map((url, i) => (
-                        <div key={i} className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all cursor-zoom-in hover:shadow-xl hover:-translate-y-1 duration-300" onClick={() => setSelectedImg(url)}>
-                          <img src={url} alt={`Ref ${i}`} referrerPolicy="no-referrer" className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105" />
-                          
-                          {/* ExternalLink를 사용하는 호버 버튼 섹션 */}
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <button onClick={(e) => {e.stopPropagation(); window.open(url, '_blank')}} className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/40 hover:bg-white/40 transition-all">
-                              <ExternalLink size={20} />
-                            </button>
-                          </div>
+                    {result.reference_images.map((url, i) => (
+                      <div 
+                        key={i} 
+                        className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-border bg-muted shadow-sm transition-all cursor-zoom-in hover:shadow-xl hover:-translate-y-1 duration-300"
+                        id={`ref-card-${i}`} // ID 추가
+                        onClick={() => setSelectedImg(url)}
+                      >
+                        <img 
+                          src={url} 
+                          alt={`Ref ${i}`} 
+                          referrerPolicy="no-referrer" 
+                          className="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105"
+                          // 핵심: 이미지 로딩 실패 시 부모 컨테이너(div)를 아예 숨김
+                         onError={(e) => {
+                            // 에러가 난 이미지의 부모 요소(div)를 찾아서 숨김
+                            const target = e.currentTarget.parentElement;
+                            if (target) {
+                              (target as HTMLElement).style.display = 'none';
+                            }
+                          }}
+                        />
+                        
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <button 
+                            onClick={(e) => {e.stopPropagation(); window.open(url, '_blank')}} 
+                            className="p-3 bg-white/20 backdrop-blur-md rounded-full text-white border border-white/40 hover:bg-white/40 transition-all"
+                          >
+                            <ExternalLink size={20} />
+                          </button>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
+                  </div>
                   ) : (
                     <div className="h-40 flex flex-col items-center justify-center border-2 border-dashed border-border rounded-3xl bg-secondary/10">
                       <ImageIcon className="opacity-20 mb-2" size={32} />

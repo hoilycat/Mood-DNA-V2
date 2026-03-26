@@ -124,17 +124,40 @@ def calculate_complexity(image_bytes):
         
     return min(float(score), 100.0)
 
+
+#여백 비율 로직
 def calculate_space_ratio(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
+
+    # 1. 로고 모드(투명 배경)일 때는 기존처럼 투명도 기준
     if is_logo_mode:
-        # 투명한 배경 비율 계산
         return float((np.count_nonzero(img[:, :, 3] == 0) / (img.shape[0] * img.shape[1])) * 100)
     
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, white = cv2.threshold(gray, 235, 255, cv2.THRESH_BINARY)
-    _, black = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY_INV)
-    return float((np.count_nonzero(white | black) / gray.size) * 100)
+    # 2. 일반 이미지(포스터 등)일 때: "지능형 음의 공간(Negative Space)" 계산
+    # 그레이스케일 변환
+    gray = cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2GRAY)
+    
+    # 가우시안 블러로 미세한 노이즈 제거 (배경의 질감을 뭉개줌)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 엣지 검출 (Canny)
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    # 엣지 팽창 (글자나 캐릭터 주변의 아주 가까운 공간도 '내용물'로 취급하기 위해)
+    kernel = np.ones((5, 5), np.uint8)
+    dilated_edges = cv2.dilate(edges, kernel, iterations=2)
+    
+    # 전체 면적 중 엣지가 없는(0인) 영역의 비율 계산
+    # 즉, 아무런 선이나 디테일이 없는 '평평한 면'을 여백으로 봄
+    non_edge_pixels = np.count_nonzero(dilated_edges == 0)
+    total_pixels = gray.size
+    
+    space_ratio = (non_edge_pixels / total_pixels) * 100
+    
+    # 너무 뻥튀기 되지 않게 보정 (보통 포스터에서 아무것도 없는 면이 80%를 넘기 힘듦)
+    return min(float(space_ratio), 100.0)
+
 
 def calculate_symmetry(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
@@ -149,6 +172,7 @@ def calculate_symmetry(image_bytes):
         score = 100 - (abs(np.mean(left) - np.mean(right)) / 255 * 500)
     return max(float(score), 0.0)
 
+
 def calculate_saliency(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)
     if img is None: return 0.0
@@ -156,16 +180,28 @@ def calculate_saliency(image_bytes):
     success, map_data = saliency.computeSaliency(img[:, :, :3] if is_logo_mode else img)
     return min(float(np.mean(map_data) * 500), 100.0) if success else 0.0
 
-def extract_color_dna(image_bytes, k=5, remove_bg=False):
-    img, is_logo_mode = get_image_and_mode(image_bytes)
+
+
+def extract_color_dna(image_bytes, k=10, remove_bg_internally=False): 
+    target_bytes = image_bytes
+    
+    # 1. 내부적으로 배경 제거가 필요하다면 실행
+    if remove_bg_internally:
+        from rembg import remove
+        target_bytes = remove(image_bytes)
+
+    # 2. 이미지 로드 및 모드 판별 (여기서 한 번만 수행)
+    img, is_logo_mode = get_image_and_mode(target_bytes)
     if img is None: return []
     
-    # 1. 투명하지 않은 픽셀만 추출 (배경색 왜곡 방지)
+    # 3. 분석용 픽셀 추출
+    # 로고 모드면 투명하지 않은 것만, 아니면 전체 픽셀
     pixels = img[img[:, :, 3] > 0][:, :3] if is_logo_mode else img.reshape((-1, 3))
+    
     if len(pixels) < k: return []
     
+    # 4. K-means 알고리즘 실행
     data = np.float32(pixels)
-    # K-means 클러스터링
     _, labels, centers = cv2.kmeans(data, k, None, (cv2.TERM_CRITERIA_EPS + 10, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
     
     counts = np.bincount(labels.flatten())
@@ -173,30 +209,32 @@ def extract_color_dna(image_bytes, k=5, remove_bg=False):
     
     candidates = []
     for i in range(len(centers)):
-        rgb = centers[i][::-1] # BGR -> RGB
+        rgb = centers[i][::-1] # BGR -> RGB 변환
         percentage = counts[i] / total
         
-        # 미세 노이즈 제거 (0.5% 미만)
-        if percentage < 0.005: continue
+        if percentage < 0.005: continue # 너무 작은 영역(노이즈) 제외
         
-        # [중요] 채도 가중치(s_weight)를 제거하여 검정/회색도 면적만큼 인정받게 함
         candidates.append({
             'rgb': rgb,
             'hex': f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}",
-            'score': percentage # 순수하게 면적비율로만 점수 산정
+            'score': percentage
         })
     
-    # 점수 순(면적 순) 정렬
+    # 5. 면적 순으로 정렬
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
+    # 6. 너무 비슷한 색상끼리는 합치거나 제외하는 필터링
     final = []
     for c in candidates:
-        if len(final) >= 5: break
-        # 색상 간 거리가 충분히 먼 것만 채택
-        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 30 for f in final):
+        if len(final) >= 5: break # 최종 5개만 선택
+        
+        # 💡 필터 기준을 30 -> 20으로 낮춰서 핑크색이 다른 색과 비슷해도 살아남게 함
+        if not any(np.linalg.norm(np.array(c['rgb']) - np.array(f['rgb'])) < 20 for f in final):
             final.append(c)
             
     return [c['hex'] for c in final]
+
+
 
 def calculate_contrast(image_bytes):
     img, is_logo_mode = get_image_and_mode(image_bytes)

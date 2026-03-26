@@ -86,7 +86,7 @@ async def analyze_image(
     space = calculate_space_ratio(analyze_bytes)
     
     # 💡 중요: extract_color_dna 내에서 배경 제거를 또 하지 않도록 remove_bg=False로 설정
-    colors = extract_color_dna(analyze_bytes, k=5, remove_bg=False)
+    colors = extract_color_dna(analyze_bytes, k=10, remove_bg_internally=False)
     contrast_score = calculate_contrast(analyze_bytes)
     composition_score = calculate_composition(analyze_bytes)
     aspect_ratio_score = calculate_aspect_ratio(analyze_bytes)
@@ -172,7 +172,7 @@ async def compare_images(
         "saliency": calculate_saliency(a_bytes),
         "symmetry": calculate_symmetry(a_bytes),
         "space": calculate_space_ratio(a_bytes),
-        "colors": extract_color_dna(a_bytes, remove_bg=False)
+        "colors": extract_color_dna(a_bytes, remove_bg_internally=False)
     }
     stats2 = {
         "brightness": calculate_brightness(b_bytes),
@@ -180,7 +180,7 @@ async def compare_images(
         "saliency": calculate_saliency(b_bytes),
         "symmetry": calculate_symmetry(b_bytes),
         "space": calculate_space_ratio(b_bytes),
-        "colors": extract_color_dna(b_bytes, remove_bg=False)
+        "colors": extract_color_dna(b_bytes, remove_bg_internally=False)
     }
 
     # 2. AI 비교 분석

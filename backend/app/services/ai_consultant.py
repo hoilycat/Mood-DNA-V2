@@ -1,12 +1,15 @@
 from google import genai
 from google.genai import types
-#import ollama
+
 import time
+import sys
+import io
 import os
 from dotenv import load_dotenv
 import json
 import cv2
 import numpy as np
+
 
 # 1. 환경 설정 및 API 키 로드
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,42 +45,67 @@ def resize_image_bytes(image_bytes, max_size=1024):
     
     
 def consult_batch_audition(results, target_dna, brand_context, winner_image_bytes=None):
-    # 1. 순위 데이터 텍스트화 (AI가 읽을 수 있게)
+     # 1. 상위 3개 데이터를 상세하게 텍스트화
     ranking_text = ""
     for i, res in enumerate(results[:3]):
-        ranking_text += f"{i+1}위: {res['filename']} (점수: {res['score']}점)\n"
+        # 데이터가 res['dna'] 아래에 있는지, 아니면 res 바로 아래에 있는지 체크해서 가져옵니다.
+        # .get()을 사용하면 키가 없어도 에러(KeyError)가 나지 않고 None을 반환합니다.
+        dna_data = res.get('dna', res) 
+        
+        brightness = dna_data.get('brightness', 0)
+        complexity = dna_data.get('complexity', 0)
+        saliency = dna_data.get('saliency', 0)
+        symmetry = dna_data.get('symmetry', 0)
+        space = dna_data.get('space', 0)
 
-    prompt = f"""
-    당신은 디자인 오디션 'Mood-DNA'의 심사위원장입니다. 
-    사용자가 설정한 {brand_context['mainMood']} - {brand_context['subMood']} 무드에 가장 부합하는 시안을 선정하세요.
-    사용자의 브랜드 설명: {brand_context['description']}
-    목표 DNA 수치: {target_dna}
+        ranking_text += (f"{i+1}위 시안: {res.get('filename', 'Unknown')} (총점: {res.get('score', 0)}점)\n"
+                         f" - 수치 정보: 밝기 {brightness}, 복잡도 {complexity}, "
+                         f"집중도 {saliency}, 대칭성 {symmetry}, 여백 {space}\n\n")
 
-    [제출된 시안 순위 리스트]
+    # 2. 모든 AI가 공통으로 사용할 '기본 프롬프트' (변수명을 base_prompt로 통일)
+    base_prompt = f"""
+    [역할: 세계적인 디자인 비평가이자 브랜딩 전략가]
+    당신은 단순히 점수를 매기는 기계가 아니라, 디자인에 담긴 '의도'를 읽어내고 사용자를 설득하는 마스터입니다.
+    디자인이 브랜드의 가치({brand_context['description']})를 어떻게 시각적으로 구현했는지 전문적인 '서사'를 담아 비평하세요.
+    
+    [사용자 브랜드 정보]
+    - 업종: {brand_context['industry']}
+    - 목표 무드: {brand_context['mainMood']} (메인) / {brand_context['subMood']} (서브)
+    - 브랜드 핵심 가치 및 설명: {brand_context['description']}
+    - 사용자가 추구하는 디자인 DNA (Target): {target_dna}
+
+    [제출된 시안 분석 데이터]
     {ranking_text}
     
-    [심사 지침]
-    1. 1위로 선정된 시안이 사용자의 추구미와 브랜드 설명에 왜 가장 완벽하게 부합하는지 데이터를 근거로 극찬하세요.
-    2. 하위권 시안들이 점수가 낮은 이유(예: 복잡도가 너무 높음, 여백 부족 등)를 날카롭게 지적하세요.
-    3. 전체적으로 이번 시안들이 브랜드의 방향성을 잘 잡고 있는지 총평을 남기세요.
-    
+    [심사 및 비평 지침 - 필독]
+    1. 1위 시안(Winner) 집중 분석 (최소 5문장 이상):
+       - "수치가 목표와 가깝다"는 식의 기계적 나열은 금지합니다.
+       - 예: "복잡도가 {target_dna.get('complexity', 50)}점에 근접한 것은, 브랜드 설명에서 언급하신 '{brand_context['description'][:15]}...'의 정체성을 담아내기 위해 의도적으로 디테일을 조절했음을 보여줍니다."
+       - 이 디자인이 자아내는 '심리적 분위기'와 '전문성'을 디자인 용어를 사용하여 극찬하세요.
+
+    2. 하위권 시안과의 비교:
+       - 1위가 2, 3위에 비해 왜 더 '브랜드 정체성'을 명확히 드러냈는지 조형적(여백, 집중도 등)으로 비교하세요.
+
+    3. 문체 및 언어:
+       - 냉철하면서도 신뢰감 있는 전문가의 구어체(~합니다)를 사용하세요.
+       - 반드시 100% 한국어로만 작성하고, 태국어나 다른 외국어가 섞이지 않게 하세요.
+
     [출력 형식 - JSON]
     {{
-        "winner_review": "1위 시안에 대한 상세 심사평",
-        "ranking_summary": "순위별 데이터 분석 요약",
-        "overall_advice": "브랜드 발전을 위한 마스터의 최종 제안"
+        "winner_review": "1위 시안에 대한 심층적이고 감성적인 서사 비평 (300자 내외)",
+        "ranking_summary": "순위가 결정된 결정적 이유 및 상위권 시안 요약",
+        "overall_advice": "브랜드의 완성도를 높이기 위한 마스터의 최종 제안"
     }}
     """
     
-     # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
+    # --- 1단계: 제미나이(Gemini) 시도 ---
     gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
         try:
             print(f"[서버 로그] 오디션 1순위 제미나이 시도: {model_name}...")
-            # 1위 이미지가 있다면 이미지와 함께 분석, 없으면 텍스트로만 분석
-            contents = [prompt]
+            contents = [base_prompt] # 여기를 base_prompt로 수정
             if winner_image_bytes:
                 contents.insert(0, types.Part.from_bytes(data=winner_image_bytes, mime_type="image/jpeg"))
             
@@ -94,16 +122,45 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
                 print(f"[주의] {model_name} 할당량 초과, 3초 대기...")
                 time.sleep(3)
             continue
+        
+    # --- 2단계: 제미나이 실패 시, 그록(Groq)을 위한 '눈' 빌려오기 ---
+    print("[서버 로그] 제미나이 실패. 로컬 비전 모델로 1위 시안을 묘사합니다...")
+    visual_desc = "시각적 정보 없음 (수치 데이터로만 분석 바랍니다)."
+    
+    if winner_image_bytes:
+        try:
+            import ollama
+            vision_res = ollama.chat(
+                model='llama3.2-vision', 
+                messages=[{
+                    'role': 'user', 
+                    'content': 'Describe the winning design in detail. Mention symbols, colors, layout, and style.', 
+                    'images': [winner_image_bytes]
+                }]
+            )
+            visual_desc = vision_res['message']['content']
+        except Exception as ve:
+            print(f"[로컬 비전 실패] {ve}")
 
-    # --- 2단계: 그록(Groq / Llama 3.3) 시도 (텍스트 기반 분석) ---
+    # 그록에게 넘길 최종 프롬프트 (base_prompt + 시각 묘사)
+    full_prompt = f"""
+    {base_prompt}
+
+    [참고: 1위 시안의 실제 시각적 특징]
+    {visual_desc}
+    
+    위의 시각적 묘사와 수치 데이터를 결합하여, 사용자가 감동할 만한 전문적인 비평 리포트를 작성하세요.
+    """     
+        
+    # --- 3단계: 그록(Groq / Llama 3.3) 시도 ---
     try:
         from groq import Groq
         print("[서버 로그] 오디션 2순위 그록(Groq) 호출...")
         groq_client = Groq(api_key=GROQ_API_KEY)
         completion = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "너는 디자인 오디션 심사위원장이야. 반드시 현대적인 한국어(구어체)로만 답변하고, 한자(Hanja)나 일본식 한자 혼용 표현은 절대 사용하지 마. 100% 한글로만 작성해."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "너는 디자인 비평 마스터야. 반드시 한국어로만, 깊이 있게 답변해."},
+                {"role": "user", "content": full_prompt}
             ],
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
@@ -112,18 +169,19 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
     except Exception as e2:
         print(f"[그록 실패] {e2}")
 
-        # --- 3단계: 엑사원(EXAONE) 로컬 호출 (최종 보루) ---
+        # --- 4단계: 엑사원(EXAONE) 로컬 호출 (최종 보루) ---
         try:
             import ollama
             print("[서버 로그] 오디션 최종 3순위 엑사원 호출...")
-            response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': prompt}], format='json')
+            # 엑사원에게도 가장 정보가 많은 full_prompt를 줍니다.
+            response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
             return json.loads(response['message']['content'])
         except Exception as e3:
             return {
-                "winner_review": "모든 AI 엔진이 응답하지 않습니다.",
+                "winner_review": "AI 엔진 일시적 오류",
                 "ranking_summary": "분석 불가",
-                "overall_advice": "네트워크나 로컬 서버 상태를 확인하세요."
-            }
+                "overall_advice": "네트워크 연결을 확인해 주세요."
+            }    
     
     
 
