@@ -4,9 +4,9 @@
   "description": "\"# Mood-DNA-V2\"",
   "main": "index.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev --prefix frontend\" \"uvicorn app.main:app --app-dir backend --reload --port 8000\"",
+    "dev": "concurrently \"npm run dev --prefix frontend\" \"python3 -m uvicorn app.main:app --app-dir backend --reload --port 8000\"",
     "frontend": "npm run dev --prefix frontend",
-    "backend": "uvicorn app.main:app --app-dir backend --reload --port 8000"
+    "backend": "python3 -m uvicorn app.main:app --app-dir backend --reload --port 8000"
   },
   "repository": {
     "type": "git",
