@@ -51,7 +51,7 @@ AI 피드백과 연동된 실무 레퍼런스 제안.
 <br><br>
 ### AI Models
 *   **Main Engine:** Google Gemini 1.5 Pro / Flash
-*   **Backup/Local:** Groq (Llama 3.3), Ollama (Exaone 3.5, Moondream2)
+*   **Backup/Local:** Groq (Llama 3.3), Ollama (Exaone 3.5, llama3.2-vision)
 
 ---
 <br><br><br><br>
