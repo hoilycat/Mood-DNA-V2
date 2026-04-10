@@ -45,3 +45,35 @@ __pycache__/
 
 # 가상 환경 폴더
 venv/
+env/
+ENV/
+
+# FastAPI / build artifacts
+instance/
+*.db
+*.sqlite3
+
+# ---------------------------
+# OS / Editor
+# -------------------
+# 1. 라이브러리
+node_modules/
+
+# 2. 파이썬 가상환경
+venv/
+.venv/
+
+# 3. 빌드 결과물
+dist/
+build/
+
+# 4. 환경 변수 (비밀번호 등)
+.env
+
+# 5. OS 관련 파일
+.DS_Store
+Thumbs.db
+
+#6 기타 파일
+project_summary.txt
+find_models.py
