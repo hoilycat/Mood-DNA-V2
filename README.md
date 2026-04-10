@@ -1,119 +1,95 @@
-"# Mood-DNA-V2" 
-🌙 Mood-DNA Ver 2.0
+# 🌙 Mood-DNA Ver 2.0
+> **Design Intelligence for Designers**  
+> 감각을 데이터로, 아이디어를 구조로. 
 
-Design Intelligence for Designers
-감각을 데이터로, 아이디어를 구조로.
+---
 
-🖋️ Introduction
+🖋️ **Introduction**  
+Mood-DNA는 디자이너를 위한 **AI 디자인 파트너**입니다. 단순한 이미지 분석을 넘어, 시각적 지표(Metrics)와 디자인 이론(Knowledge Graph)을 결합하여 디자인 의사결정을 빠르고 정교하게 만들어주는 하이브리드 지능형 도구입니다.
 
-Mood-DNA는 디자이너를 위한 AI 디자인 파트너입니다.
-감성·기술·문맥을 통합적으로 분석하여
-디자인 의사결정을 빠르고 정교하게 만들어주는 도구입니다.
+디자인은 감각의 영역이지만, Mood-DNA는 그 감각을 **수치화된 데이터와 학술적 근거**로 번역하여 디자이너의 설득력을 극대화합니다.
 
-디자인은 감각이지만,
-그 감각을 언어화하고 구조화하는 역할을
-Mood-DNA가 대신 수행합니다.
+---
+<br><br><br><br>
+## 🎯 Core Features
 
-🎯 Core Features (브랜드 미리보기)
-1. Target Insight
+### 🔍 1. Multi-Dimensional DNA Scanning
+OpenCV와 EasyOCR을 활용하여 이미지의 유전자를 정밀 해독합니다.
+*   **Visual Metrics:** 밝기, 복잡도, 시각적 집중도(Saliency), 대칭성, 여백 비율, 대비, 구도 안정성 분석.
+*   **Form & Texture:** 곡률(Roundness), 직선성(Straightness), 매끄러움(Smoothness) 분석을 통한 형태적 특징 추출.
+*   **Color DNA:** K-Means 알고리즘 기반 주요 컬러 팔레트 및 색채 조화도 산출.
+<br><br>
+### 🧠 2. Hybrid GraphRAG Critique (New!)
+디자인 이론과 실무 데이터를 결합한 **지식 그래프 기반 비평 엔진**입니다.
+*   **Knowledge Graph:** 디자인 원칙(게슈탈트, 힉의 법칙 등)과 스타일 간의 관계망 구축.
+*   **Hybrid Retrieval:** 벡터 검색의 '감성적 맥락'과 그래프 검색의 '논리적 인과관계'를 결합하여 전문적인 디자인 멘토링 제공.
+*   **Evidence-based Advice:** 단순히 수치를 나열하는 것이 아니라, 지식 베이스에 근거하여 해당 디자인이 특정 업종이나 타겟에 적합한지 논리적으로 비평합니다.
+<br><br>
+### 🏆 3. Design Audition (Batch Analysis)
+여러 개의 시안 중 브랜드 목표 DNA에 가장 부합하는 'Winner'를 선정합니다.
+*   **DNA Matching:** 설정한 Target DNA와 실제 데이터 사이의 유사도를 계산하여 순위 산정.
+*   **Master's Report:** AI가 오디션 심사위원처럼 각 시안의 장단점을 비교 분석하여 마스터 리포트를 생성합니다.
+<br><br>
+### 🖼️ 4. Style Benchmarking
+AI 피드백과 연동된 실무 레퍼런스 제안.
+*   **SerpApi Integration:** 분석 결과와 매칭되는 최적의 디자인 레퍼런스를 Pinterest, Dribbble, Behance 등에서 실시간으로 큐레이션합니다.
 
-타겟을 선택하면, 그들의 시각적 취향과 특성을 기반으로
-색감, 대비, 톤앤매너의 적합성을 분석해주는 “디자인 리서치 비서”.
+---
+<br><br><br><br>
+## 🧩 Tech Stack
 
-“실버 세대 타겟인데 대비가 낮아요. 글씨 톤을 조금 더 올려보면 어떨까요?”
+### Frontend
+*   **Framework:** React (Vite), TypeScript
+*   **Styling:** Tailwind CSS, Shadcn UI
+*   **Data Viz:** Recharts (Radar Chart 기반 DNA 시각화)
+<br><br>
+### Backend
+*   **Framework:** Python (FastAPI)
+*   **Analysis:** OpenCV, NumPy, EasyOCR, Rembg
+*   **Database:** SQLAlchemy (SQLite), **Neo4j (Knowledge Graph)**
+*   **RAG Framework:** **LlamaIndex (Graph Store & Vector Store)**
+<br><br>
+### AI Models
+*   **Main Engine:** Google Gemini 1.5 Pro / Flash
+*   **Backup/Local:** Groq (Llama 3.3), Ollama (Exaone 3.5, llama3.2-vision)
 
-2. Media Technical Advisor
-
-작업물이 어디에 쓰이는지에 따라
-전문적인 실무 조언을 자동으로 제공합니다.
-
-📚 출판/인쇄 — 용지 추천, 후가공 조합, CMYK 톤 안정화 팁
-
-📱 웹/앱 — 접근성, 가독성, 다크모드 대응
-
-🧢 굿즈 — 재질별 인쇄 안정화, 제작 단가 조절 팁
-
-3. Smart Archiving
-
-작업물을 저장하면
-AI가 분위기・ 키워드・타겟을 자동 기록해서 데이터베이스화합니다.
-
-“파스텔톤 · 몽환적인 감성 · 20대 여성 타겟의 에세이 표지 스타일”
-
-나중에 비슷한 디자인을 만들 때
-마치 내 과거 디자인 노트북을 다시 펼치는 기분을 줍니다.
-
-🧩 Tech Stack
-Frontend
-
-React (Vite)
-
-Tailwind CSS
-
-Shadcn UI 기반 컴포넌트 커스터마이징
-
-Backend
-
-Python (FastAPI)
-
-LLM API 연동 (Gemini 기반)
-
-Etc
-
-GitHub / Git branching workflow
-
-Local + Cloud Sync 구조
-
-🌿 Branch Strategy
-
-깔끔하고 직관적인, 디자이너-친화 Git 구조
-
-main                ← 배포 브랜치
-└── develop         ← 프론트+백엔드 통합 개발
-    ├── frontend    ← 프론트엔드 작업 묶음
-    ├── backend     ← (필요 시) 백엔드 작업 묶음
-    └── feature/*   ← 모든 실제 작업은 여기서 발생
-
-
-작업 흐름
-
-feature/* → frontend/backend → develop → main
-
-📁 Project Structure (초기 버전)
+---
+<br><br><br><br>
+## 📁 Project Structure
+```bash
 Mood-DNA-V2/
-│
-├── frontend/           # 사용자 UI
-│   └── src/
-│
-├── backend/            # API, 모델 호출 로직
-│
-└── README.md
+├── frontend/             # React + Vite 기반의 시각 분석 UI
+│   └── src/              # DNA 대시보드 및 위저드 컴포넌트
+├── backend/              # FastAPI 기반 고성능 분석 엔진
+│   └── app/
+│       ├── services/     # 핵심 로직 (Analyzer, GraphRAG, AI Consultant)
+│       └── models.py     # 디자인 히스토리 DB 스키마
+└── design_wisdom/        # GraphRAG 구축을 위한 디자인 지식 소스 (.txt, .pdf)
+```
 
-🧭 Roadmap (초기 계획)
+<br><br>
 
- 로고 & 브랜드 에셋 제작
+## 🧭 Roadmap
 
- 기본 UI 레이아웃 구성
+- [x] 이미지 수치 분석 엔진 구축 (OpenCV)
 
- Target Insight 기능 개발
+- [x] 실시간 디자인 DNA 시각화 (Radar Chart)
 
- Media Advisor 모듈링
+- [ ] LlamaIndex 기반 Hybrid GraphRAG 시스템 통합 👈 Current Focus
 
- Smart Archive DB 구축
+- [ ] 디자인 온톨로지(Design Ontology) 엔티티 확장 및 검증
 
- LLM 최적화 프롬프트 설계
+- [ ] Target Insight 기반 업종별 특화 조언 모듈 고도화
 
- 초기 베타 버전 빌드 & 테스트
+- [ ] 디자인 히스토리 스마트 아카이빙 기능
+  
+<br><br>
+## ✨ Philosophy
+"디자인의 ‘감성’을 손상시키지 않으면서 AI의 ‘이성’을 더하다."
+Mood-DNA는 기술이 디자인을 대체하는 것이 아니라, 디자이너가 자신의 직관을 논리적으로 증명하고 더 높은 차원의 창의성에 집중할 수 있도록 돕는 도구입니다.
+<br><br>
 
-✨ Philosophy
-
-디자인은 감정의 언어입니다.
-Mood-DNA는 그 언어를 데이터로 번역해주는 기술입니다.
-
-디자인의 ‘감성’을 손상시키지 않으면서
-AI의 ‘이성’을 더하는 도구.
-
-🌌 Credits
-
+## 🌌 Credits
 Designed & Developed by 용용
+
 감각적 사고 + 논리적 구조를 사랑하는 디자이너/메이커.
