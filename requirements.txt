@@ -12,6 +12,8 @@ numpy
 rembg
 easyocr
 google-genai
+groq
+ollama
 requests
 
 # Extra for EasyOCR/rembg
