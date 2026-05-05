@@ -10,14 +10,22 @@ import json
 
 def extract_json(text):
     import json
+    import re
     text = text.strip()
-    if text.startswith("```json"): text = text[7:]
-    if text.startswith("```"): text = text[3:]
-    if text.endswith("```"): text = text[:-3]
+    match = re.search(r'```(?:json)?(.*?)```', text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    else:
+        match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
     try:
-        return extract_json(text.strip())
-    except:
-        return {"category": "Error", "advice": "결과 포맷이 올바르지 않습니다: " + text[:100]}
+        return json.loads(text, strict=False)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print("FAILED TEXT:", repr(text))
+        return {"category": "Error", "advice": f"결과 포맷 파싱 에러 ({str(e)}): " + text[:100]}
 
 import cv2
 import numpy as np
