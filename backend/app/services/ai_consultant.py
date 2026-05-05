@@ -119,7 +119,7 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
     """
     
     # --- 1단계: 제미나이(Gemini) 시도 ---
-    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
@@ -436,7 +436,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
     # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
-    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
@@ -537,7 +537,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2, target_dna=None):
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
     # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
-    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
