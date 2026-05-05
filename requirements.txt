@@ -7,7 +7,7 @@ sqlalchemy
 python-multipart
 
 # AI & Processing
-opencv-python
+opencv-contrib-python
 numpy
 rembg
 easyocr

@@ -14,7 +14,11 @@
 ![LlamaIndex](https://img.shields.io/badge/LlamaIndex-3b82f6?style=flat-square&logo=chainlink&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Google_Gemini-1d4ed8?style=flat-square&logo=google&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-2563eb?style=flat-square&logo=opencv&logoColor=white)
- 
+
+<div align="center">
+  <img src="./assets/mood_dna_demo.webp" alt="Mood-DNA Demo" width="800" style="border-radius: 10px; margin-top: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"/>
+</div>
+
 ---
  
 ## 🖋️ Introduction
@@ -35,8 +39,16 @@ Mood-DNA는 기술이 디자인을 대체하는 것이 아니라, 디자이너�
  
 ---
 
+## 📸 Screenshots
 
- 
+<div align="center">
+  <img src="./assets/screenshot_1.png" alt="Mood-DNA Setup" width="32%" style="border-radius: 8px;"/>
+  <img src="./assets/screenshot_2.png" alt="Analysis Process" width="32%" style="border-radius: 8px;"/>
+  <img src="./assets/screenshot_3.png" alt="Dashboard Results" width="32%" style="border-radius: 8px;"/>
+</div>
+
+---
+
 ## 🎯 Core Features
 
 > ✅ 현재 구현 완료된 기능입니다.

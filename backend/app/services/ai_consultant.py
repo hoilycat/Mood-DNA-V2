@@ -7,6 +7,18 @@ import io
 import os
 from dotenv import load_dotenv
 import json
+
+def extract_json(text):
+    import json
+    text = text.strip()
+    if text.startswith("```json"): text = text[7:]
+    if text.startswith("```"): text = text[3:]
+    if text.endswith("```"): text = text[:-3]
+    try:
+        return extract_json(text.strip())
+    except:
+        return {"category": "Error", "advice": "결과 포맷이 올바르지 않습니다: " + text[:100]}
+
 import cv2
 import numpy as np
 
@@ -99,7 +111,7 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
     """
     
     # --- 1단계: 제미나이(Gemini) 시도 ---
-    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
@@ -116,7 +128,7 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
             )
             if response.text:
                 print(f"[성공] {model_name}이 오디션 심사를 마쳤습니다.")
-                return json.loads(response.text)
+                return extract_json(response.text)
         except Exception as e:
             if "429" in str(e):
                 print(f"[주의] {model_name} 할당량 초과, 3초 대기...")
@@ -165,7 +177,7 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )
-        return json.loads(completion.choices[0].message.content)
+        return extract_json(completion.choices[0].message.content)
     except Exception as e2:
         print(f"[그록 실패] {e2}")
 
@@ -175,7 +187,7 @@ def consult_batch_audition(results, target_dna, brand_context, winner_image_byte
             print("[서버 로그] 오디션 최종 3순위 엑사원 호출...")
             # 엑사원에게도 가장 정보가 많은 full_prompt를 줍니다.
             response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
-            return json.loads(response['message']['content'])
+            return extract_json(response['message']['content'])
         except Exception as e3:
             return {
                 "winner_review": "AI 엔진 일시적 오류",
@@ -416,7 +428,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
     # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
-    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
@@ -429,7 +441,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
             )
             if response.text:
                 print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
-                return json.loads(response.text)
+                return extract_json(response.text)
             
         except Exception as e:
             # 만약 429(할당량 초과) 에러라면?
@@ -483,7 +495,7 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )
-        return json.loads(completion.choices[0].message.content)
+        return extract_json(completion.choices[0].message.content)
     except Exception as e2:
         print(f"[그록 실패] 사유: {e2}")
 
@@ -492,12 +504,12 @@ def consult_design(image_bytes, brightness, complexity, saliency, symmetry, spac
             import ollama
             print("[서버 로그] 최종 3순위 엑사원 호출 중...")
             response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
-            return json.loads(response['message']['content'])
+            return extract_json(response['message']['content'])
         except Exception as e3:
             return {"category": "분석 불가", "advice": "모든 AI 엔진이 응답하지 않습니다. 네트워크나 로컬 서버를 확인하세요."}
 
 # 4. 시안 비교 분석 (하이브리드 모드)
-def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
+def compare_designs(img1_bytes, img2_bytes, stats1, stats2, target_dna=None):
     # 공통 프롬프트
     prompt = f"""
         당신은 세계적인 디자인 비평가입니다. 두 개의 디자인 시안(A안, B안)을 비교 분석하여 최적의 선택을 제안하세요.
@@ -517,7 +529,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
 
   # --- 1단계: 제미나이(Gemini) 릴레이 시도 ---
     # 제미나이는 직접 이미지를 볼 수 있으므로 가장 먼저, 독립적으로 실행.
-    gemini_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    gemini_models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     client = genai.Client(api_key=API_KEY)
     
     for model_name in gemini_models:
@@ -533,7 +545,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
             )
             if response.text:
                 print(f"[성공] {model_name} 모델이 분석을 완료했습니다!")
-                return json.loads(response.text)
+                return extract_json(response.text)
         except Exception as e:
             print(f"[실패] {model_name} 에러: {e}")
             continue 
@@ -573,7 +585,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )
-        return json.loads(completion.choices[0].message.content)
+        return extract_json(completion.choices[0].message.content)
     except Exception as e2:
         print(f"[그록 실패] 사유: {e2}")
 
@@ -582,7 +594,7 @@ def compare_designs(img1_bytes, img2_bytes, stats1, stats2):
             import ollama
             print("[서버 로그] 최종 3순위 엑사원 호출 중...")
             response = ollama.chat(model='exaone3.5', messages=[{'role': 'user', 'content': full_prompt}], format='json')
-            return json.loads(response['message']['content'])
+            return extract_json(response['message']['content'])
 
         except Exception as e2:
             print(f"[최종 에러] 비교 엔진 마비: {e2}")
