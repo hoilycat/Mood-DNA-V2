@@ -108,7 +108,94 @@ AI 피드백과 연동된 실무 레퍼런스 제안.
 ---
 
 
- 
+## 🚀 Getting Started
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Node.js | 18+ |
+| Python | 3.10+ |
+| npm | 9+ |
+
+### 1. Clone & Install
+
+```bash
+# 저장소 클론
+git clone https://github.com/your-username/mood-dna-v2.git
+cd mood-dna-v2
+
+# Python 패키지 설치
+pip install -r requirements.txt
+
+# 프론트엔드 패키지 설치
+cd frontend && npm install && cd ..
+```
+
+### 2. 환경변수 설정
+
+```bash
+cp .env.example .env
+```
+
+`.env` 파일을 열어 API 키를 입력하세요:
+
+| 변수명 | 필수 여부 | 설명 | 발급처 |
+|--------|-----------|------|--------|
+| `GEMINI_API_KEY` | **필수** | Gemini AI 분석 엔진 | [Google AI Studio](https://aistudio.google.com/) |
+| `SERP_API_KEY` | **필수** | 레퍼런스 이미지 검색 | [SerpApi](https://serpapi.com/) |
+| `GROQ_API_KEY` | 선택 | AI 분석 폴백 모델 | [Groq](https://console.groq.com/) |
+| `UNSPLASH_ACCESS_KEY` | 선택 | 추가 이미지 소스 | [Unsplash](https://unsplash.com/developers) |
+
+> **참고:** `GROQ_API_KEY`가 없으면 Gemini 실패 시 로컬 Ollama(exaone3.5)로 폴백됩니다.
+
+### 3. 실행
+
+```bash
+# 프론트엔드 + 백엔드 동시 실행 (루트에서)
+npm run dev
+```
+
+또는 각각 따로 실행:
+
+```bash
+# 백엔드 (포트 8000)
+cd backend && uvicorn app.main:app --reload
+
+# 프론트엔드 (포트 5173)
+cd frontend && npm run dev
+```
+
+브라우저에서 `http://localhost:5173` 접속
+
+---
+
+
+## 🎬 How It Works
+
+Mood-DNA는 **4단계 위자드**로 디자인 DNA를 설정하고 이미지를 분석합니다.
+
+```
+Step 1 │ 업종 선택
+       │ 7개 카테고리(Natural / Impact / Rational / Artistic / Retro / Official / Commercial)
+       │ 각 카테고리 내 세부 업종(총 20+ 옵션)에서 브랜드와 가장 가까운 것을 선택
+         ↓
+Step 2 │ 분위기 태그 선택
+       │ #따뜻한 #차가운 #힙한 #클래식한 등 10가지 감성 키워드 선택
+       │ 업종 DNA(60%) + 분위기 태그(40%) 가중 블렌딩으로 Target DNA 생성
+         ↓
+Step 3 │ Target DNA 확인
+       │ 레이더 차트로 목표 수치 시각화 및 미세 조정
+         ↓
+Step 4 │ 이미지 업로드 & 분석 모드 선택
+       │ ├─ 단일 분석: 디자인 1장 → DNA 점수 + AI 크리티크
+       │ ├─ 비교 분석: 디자인 2장 → 유사도 + 비교 리포트
+       │ └─ 배치 오디션: 디자인 3장+ → 랭킹 + 마스터 리포트
+```
+
+---
+
+
 ## ⚙️ System Architecture
  
 ```mermaid
@@ -147,17 +234,25 @@ style K fill:#eff6ff,color:#1d4ed8
 ## 🧩 Tech Stack
  
 ### Frontend
-*   **Framework:** React (Vite), TypeScript
-*   **Styling:** Tailwind CSS, Shadcn UI
-*   **Data Viz:** Recharts (Radar Chart 기반 DNA 시각화)
+*   **Framework:** React 19.2, TypeScript, Vite
+*   **Styling:** Tailwind CSS 4.2, Shadcn UI
+*   **Data Viz:** Recharts 3.7 (Radar Chart 기반 DNA 시각화)
+*   **Animation:** Framer Motion (Motion 12)
+*   **HTTP:** Axios 1.13
+*   **Icons:** Lucide React
+
 ### Backend
-*   **Framework:** Python (FastAPI)
-*   **Analysis:** OpenCV, NumPy, EasyOCR, Rembg
-*   **Database:** SQLAlchemy (SQLite), **Neo4j (Knowledge Graph)**
-*   **RAG Framework:** **LlamaIndex (Graph Store & Vector Store)**
+*   **Framework:** Python, FastAPI, Uvicorn
+*   **Analysis:** OpenCV-contrib, NumPy, EasyOCR, Rembg
+*   **Database:** SQLAlchemy (SQLite)
+*   **Deep Learning:** PyTorch, ONNX Runtime (EasyOCR / Rembg 내부 사용)
+*   **HTTP Client:** httpx (비동기 API 호출)
+*   **RAG Framework:** **LlamaIndex + Neo4j** *(개발 중)*
+
 ### AI Models
-*   **Main Engine:** Google Gemini 1.5 Pro / Flash
-*   **Backup/Local:** Groq (Llama 3.3), Ollama (Exaone 3.5, llama3.2-vision)
+*   **Primary:** Google Gemini 2.0 Flash / 1.5 Flash / 1.5 Pro
+*   **Fallback:** Groq (Llama 3.3-70B)
+*   **Final Fallback (Local):** Ollama — Exaone 3.5, llama3.2-vision
 ---
 
 
@@ -165,14 +260,27 @@ style K fill:#eff6ff,color:#1d4ed8
 ## 📁 Project Structure
  
 ```bash
-Mood-DNA-V2/
-├── frontend/             # React + Vite 기반의 시각 분석 UI
-│   └── src/              # DNA 대시보드 및 위저드 컴포넌트
-├── backend/              # FastAPI 기반 고성능 분석 엔진
+mood-dna-v2/
+├── frontend/                    # React 19 + Vite (TypeScript)
+│   └── src/
+│       ├── App.tsx              # 전체 UI — 위자드, 대시보드, 결과 뷰
+│       ├── main.tsx             # 앱 진입점
+│       └── lib/utils.ts         # 유틸리티 함수
+│
+├── backend/                     # Python FastAPI
 │   └── app/
-│       ├── services/     # 핵심 로직 (Analyzer, GraphRAG, AI Consultant)
-│       └── models.py     # 디자인 히스토리 DB 스키마
-└── design_wisdom/        # GraphRAG 구축을 위한 디자인 지식 소스 (.txt, .pdf)
+│       ├── main.py              # API 엔드포인트 (/analyze, /compare, /analyze-batch)
+│       ├── models.py            # SQLAlchemy ORM (DesignHistory)
+│       ├── database.py          # SQLite 세션 관리
+│       └── services/
+│           ├── analyzer.py      # 컴퓨터 비전 엔진 (19가지 지표 추출)
+│           ├── ai_consultant.py # AI 크리티크 엔진 (멀티모델 폴백)
+│           └── google_search.py # 레퍼런스 이미지 검색 (SerpApi)
+│
+├── assets/                      # 데모 이미지 및 스크린샷
+├── .env.example                 # 환경변수 템플릿
+├── requirements.txt             # Python 패키지
+└── package.json                 # 루트 (concurrently 병렬 실행)
 ```
  
 ---
