@@ -1,5 +1,8 @@
 # 🌙 Mood-DNA Ver 2.0
 
+![version](https://img.shields.io/badge/version-2.0-3b82f6?style=flat-square)
+![status](https://img.shields.io/badge/status-frozen-64748b?style=flat-square)
+
 > **Design Intelligence for Designers**  
 > 감각을 데이터로, 아이디어를 구조로.
 
@@ -42,22 +45,78 @@ AI 피드백과 연동된 실무 레퍼런스 제안.
 
 ---
 <br><br><br><br>
+## 🚀 Getting Started
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Node.js | 18+ |
+| Python | 3.10+ |
+| npm | 9+ |
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/hoilycat/Mood-DNA-V2.git
+cd Mood-DNA-V2
+
+pip install -r requirements.txt
+cd frontend && npm install && cd ..
+```
+
+### 2. 환경변수 설정
+
+루트에 `.env` 파일을 만들고 필요한 API 키를 입력합니다.
+
+| 변수명 | 필수 여부 | 설명 |
+|--------|-----------|------|
+| `GEMINI_API_KEY` | 필수 | Gemini AI 분석 엔진 |
+| `SERP_API_KEY` | 필수 | 레퍼런스 이미지 검색 |
+| `GROQ_API_KEY` | 선택 | AI 분석 폴백 모델 |
+| `UNSPLASH_ACCESS_KEY` | 선택 | 추가 이미지 소스 |
+
+### 3. 실행
+
+```bash
+npm run dev
+```
+
+브라우저에서 `http://localhost:5173`에 접속합니다.
+
+---
+<br><br><br><br>
+## 🎬 How It Works
+
+Mood-DNA는 디자인 목표를 설정한 뒤 이미지를 업로드해 DNA 점수와 AI 피드백을 확인하는 흐름으로 동작합니다.
+
+```text
+Step 1 | 업종 선택
+Step 2 | 분위기 태그 선택
+Step 3 | Target DNA 확인 및 조정
+Step 4 | 이미지 업로드 후 단일 분석 / 비교 분석 / 배치 오디션 실행
+```
+
+---
+<br><br><br><br>
 ## 🧩 Tech Stack
 
 ### Frontend
-*   **Framework:** React (Vite), TypeScript
+*   **Framework:** React, TypeScript, Vite
 *   **Styling:** Tailwind CSS, Shadcn UI
 *   **Data Viz:** Recharts (Radar Chart 기반 DNA 시각화)
+*   **Animation:** Framer Motion
 <br><br>
 ### Backend
 *   **Framework:** Python (FastAPI)
 *   **Analysis:** OpenCV, NumPy, EasyOCR, Rembg
-*   **Database:** SQLAlchemy (SQLite), **Neo4j (Knowledge Graph)**
+*   **Database:** SQLAlchemy (SQLite), Neo4j (Knowledge Graph)
 *   **RAG Framework:** **LlamaIndex (Graph Store & Vector Store)**
 <br><br>
 ### AI Models
-*   **Main Engine:** Google Gemini 1.5 Pro / Flash
-*   **Backup/Local:** Groq (Llama 3.3), Ollama (Exaone 3.5, llama3.2-vision)
+*   **Primary:** Google Gemini
+*   **Fallback:** Groq (Llama 3.3)
+*   **Local Fallback:** Ollama (Exaone 3.5, llama3.2-vision)
 
 ---
 <br><br><br><br>
