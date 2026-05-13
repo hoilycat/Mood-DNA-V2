@@ -4,13 +4,16 @@ uvicorn
 pydantic
 python-dotenv
 sqlalchemy
+python-multipart
 
 # AI & Processing
-opencv-python
+opencv-contrib-python
 numpy
 rembg
 easyocr
 google-genai
+groq
+ollama
 requests
 
 # Extra for EasyOCR/rembg
