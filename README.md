@@ -1,6 +1,12 @@
 # 🌙 Mood-DNA Ver 2.0
+
 > **Design Intelligence for Designers**  
-> 감각을 데이터로, 아이디어를 구조로. 
+> 감각을 데이터로, 아이디어를 구조로.
+
+> 🔒 **이 버전은 안정 버전으로 프리즈된 상태입니다.**  
+> 신규 개발은 [Mood-DNA v3](https://github.com/hoilycat/Mood-DNA-V3)에서 진행됩니다.
+
+
 
 ---
 
